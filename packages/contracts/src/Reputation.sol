@@ -1,63 +1,73 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
+import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
-import "./EconosReputation.sol";
 
-contract EconosRegistry is Ownable {
-    struct AgentService {
-        address provider;
-        string manifestURI; // URL to JSON capabilities
-        uint256 basePrice;  // Price in Wei
-        bool isActive;
-        uint256 stake;
+contract EconosReputation is Ownable {
+    using ECDSA for bytes32;
+
+    struct RepScore {
+        uint256 totalInferences;
+        uint256 successfulVerifications;
+        int256 netScore;
     }
 
-    EconosReputation public reputationContract;
-    mapping(address => AgentService) public services;
-    address[] public providerList;
+    address public registryAddress;
+    mapping(address => RepScore) public scores;
 
-    event ServiceRegistered(address indexed provider, string manifestURI, uint256 price);
-    event ServiceUpdated(address indexed provider, uint256 newPrice, bool active);
+    event ReputationUpdated(address indexed worker, int256 newScore);
+    event RegistryAddressUpdated(address indexed newRegistry);
 
-    // Pass the address of the DEPLOYED EconosReputation contract here
-    constructor(address _reputationContractAddress) Ownable(msg.sender) {
-        reputationContract = EconosReputation(_reputationContractAddress);
+    modifier onlyRegistry() {
+        require(msg.sender == registryAddress, "Caller must be EconosRegistry");
+        _;
     }
 
-    function registerService(string calldata _manifestURI, uint256 _basePrice) external payable {
-        // REQUIREMENT: Must stake at least 10 CRO (10 * 10^18 wei)
-        require(msg.value >= 10 ether, "Minimum stake required: 10 CRO");
-        require(services[msg.sender].provider == address(0), "Already registered");
+    constructor() Ownable(msg.sender) {}
 
-        services[msg.sender] = AgentService({
-            provider: msg.sender,
-            manifestURI: _manifestURI,
-            basePrice: _basePrice,
-            isActive: true,
-            stake: msg.value
-        });
-
-        providerList.push(msg.sender);
-
-        // Calls the Reputation contract to initialize score
-        reputationContract.initializeReputation(msg.sender);
-
-        emit ServiceRegistered(msg.sender, _manifestURI, _basePrice);
+    function updateRegistryAddress(address _registry) external onlyOwner {
+        registryAddress = _registry;
+        emit RegistryAddressUpdated(_registry);
     }
 
-    function updatePrice(uint256 _newPrice) external {
-        require(services[msg.sender].provider != address(0), "Not registered");
-        services[msg.sender].basePrice = _newPrice;
-        emit ServiceUpdated(msg.sender, _newPrice, services[msg.sender].isActive);
+    function initializeReputation(address _agent) external onlyRegistry {
+        scores[_agent] = RepScore(0, 0, 100); // Start with 100 points
     }
 
-    function getServiceCount() external view returns (uint256) {
-        return providerList.length;
+    function verifyWorkerPerformance(
+        address _worker,
+        bytes32 _dataHash,
+        bytes calldata _signature
+    ) external {
+        // 1. Recreate the signed message hash
+        bytes32 ethSignedHash = MessageHashUtils.toEthSignedMessageHash(
+            _dataHash
+        );
+
+        // 2. Recover signer
+        address recoveredSigner = ethSignedHash.recover(_signature);
+
+        require(
+            recoveredSigner == _worker,
+            "Signature mismatch: Data not signed by worker"
+        );
+
+        // 3. Update Score
+        scores[_worker].totalInferences += 1;
+        scores[_worker].successfulVerifications += 1;
+        scores[_worker].netScore += 1;
+
+        emit ReputationUpdated(_worker, scores[_worker].netScore);
     }
-    
-    // Helper to withdraw stakes (for hackathon testing)
-    function emergencyWithdraw() external onlyOwner {
-        payable(owner()).transfer(address(this).balance);
+
+    function slashWorker(address _worker, uint256 _penalty) external onlyOwner {
+        scores[_worker].netScore -= int256(_penalty);
+        emit ReputationUpdated(_worker, scores[_worker].netScore);
+    }
+
+    function getReputation(address _worker) external view returns (int256) {
+        return scores[_worker].netScore;
     }
 }
