@@ -118,7 +118,7 @@ sequenceDiagram
 
 ---
 
-# 5. Hybrid Model Justification (EIP-712 + Escrow)
+## 5. Hybrid Model (EIP-712 + Escrow)
 
 The hybrid model is designed to split authority cleanly:
 
@@ -159,7 +159,7 @@ Workers:
 
 ---
 
-# 6. Detailed Workflow
+## 6. Detailed Workflow
 
 The full task lifecycle contains six phases.
 
@@ -252,7 +252,7 @@ Escrow contract enforces:
 
 ---
 
-# 7. Smart Contract Responsibilities
+## 7. Smart Contract Responsibilities
 
 ### 7.1 Native Escrow Contract
 
@@ -290,7 +290,7 @@ Requirements:
 
 ---
 
-# 8. Sidecar Runtime (Node.js)
+## 8. Sidecar Runtime (Node.js)
 
 The Sidecar connects blockchain and HTTP without exposing blockchain to Web2 developers.
 
@@ -319,7 +319,7 @@ They only:
 
 ---
 
-# 9. x402 Mapping
+## 9. x402 Mapping
 
 | x402 Concept            | Econos Mapping                                     |
 | ----------------------- | -------------------------------------------------- |
@@ -336,7 +336,7 @@ This is significantly more advanced than simple contract automation because it i
 
 ---
 
-# 10. Security and Economics
+## 10. Security and Economics
 
 Worker Safety:
 
@@ -352,7 +352,7 @@ Master Safety:
 
 ---
 
-# 11. Ecosystem Value
+## 11. Ecosystem Value
 
 Econos introduces:
 
@@ -364,7 +364,7 @@ Econos introduces:
 
 ---
 
-# 12. Conclusion
+## 12. Conclusion
 
 Econos enables autonomous compute settlement between agents using a hybrid authorization and settlement model that combines off chain EIP-712 intents, on chain escrow guarantees, gasless execution via Paymaster, and universal HTTP interoperability through a Sidecar runtime. The system is x402 native, financially coherent, and production viable in concept.
 
