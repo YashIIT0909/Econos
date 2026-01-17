@@ -6,19 +6,23 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 contract WorkerRegistry is Ownable {
     struct Worker {
         address walletAddress;
-        bytes32 metadataPointer; // IPFS CID
-        uint8 reputation;        // 0-100
+        bytes32 metadataPointer; // Supabase UUID (keccak256 hashed)
+        uint8 reputation; // 0-100
         bool isActive;
         uint256 registrationTime;
     }
 
     mapping(address => Worker) public workers;
-    
+
     // Whitelist the Escrow contract so it can call slash()
     address public escrowContract;
 
     event WorkerRegistered(address indexed worker, bytes32 metadata);
-    event WorkerSlashed(address indexed worker, address indexed slasher, uint8 newScore);
+    event WorkerSlashed(
+        address indexed worker,
+        address indexed slasher,
+        uint8 newScore
+    );
     event WorkerBanned(address indexed worker);
 
     constructor() Ownable(msg.sender) {}
@@ -31,7 +35,10 @@ contract WorkerRegistry is Ownable {
      * @notice Register as a new worker. Starts with 100 Reputation.
      */
     function register(bytes32 _metadataPointer) external {
-        require(workers[msg.sender].walletAddress == address(0), "Already registered");
+        require(
+            workers[msg.sender].walletAddress == address(0),
+            "Already registered"
+        );
 
         workers[msg.sender] = Worker({
             walletAddress: msg.sender,
@@ -50,7 +57,7 @@ contract WorkerRegistry is Ownable {
      */
     function slashReputation(address _worker, address _slasher) external {
         require(msg.sender == escrowContract, "Only Escrow can slash");
-        
+
         Worker storage w = workers[_worker];
         require(w.isActive, "Worker not active");
 

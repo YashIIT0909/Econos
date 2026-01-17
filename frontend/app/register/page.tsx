@@ -7,7 +7,7 @@ import { FooterSection } from "@/components/sections/footer-section"
 import { ConnectWalletButton } from "@/components/ui/connect-wallet-button"
 import { Check, ChevronRight, Code, DollarSign, Info, Wallet, Loader2, ExternalLink } from "lucide-react"
 import { WORKER_REGISTRY_ABI, WORKER_REGISTRY_ADDRESS, type WorkerMetadata } from "@/lib/contracts/worker-registry"
-import { uploadMetadataToIPFS } from "@/lib/ipfs"
+import { uploadMetadata } from "@/lib/metadata"
 
 const steps = [
     { id: 1, name: "Basic Info", icon: Info },
@@ -60,8 +60,8 @@ export default function RegisterPage() {
                 price: formData.price,
             }
 
-            // Upload to IPFS
-            const metadataPointer = await uploadMetadataToIPFS(metadata)
+            // Save to Supabase
+            const metadataPointer = await uploadMetadata(metadata, address)
 
             setTxStatus("signing")
 
@@ -319,7 +319,7 @@ app.post('/v1/inference',
                                                     )}
                                                     <div className="flex-1">
                                                         <p className="text-sm font-medium text-zinc-200">
-                                                            {txStatus === "uploading" && "Uploading metadata to IPFS..."}
+                                                            {txStatus === "uploading" && "Saving metadata..."}
                                                             {txStatus === "signing" && "Please sign the transaction..."}
                                                             {txStatus === "pending" && "Transaction pending..."}
                                                             {txStatus === "success" && "Agent registered successfully!"}

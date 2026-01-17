@@ -1,45 +1,72 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { PinataSDK } from 'pinata-web3'
-import { keccak256, toBytes } from 'viem'
-
-// Initialize Pinata with server-side JWT (NOT exposed to client)
-const pinata = new PinataSDK({
-    pinataJwt: process.env.PINATA_JWT,
-    pinataGateway: process.env.PINATA_GATEWAY || "gateway.pinata.cloud",
-})
+import { createServerSupabaseClient } from '@/lib/supabase'
+import { keccak256, toBytes, pad } from 'viem'
 
 export async function POST(request: NextRequest) {
     try {
-        const metadata = await request.json()
+        const body = await request.json()
+        const { metadata, walletAddress } = body
 
-        // Validate metadata
-        if (!metadata.name || !metadata.description || !metadata.category) {
+        // Validate input
+        if (!metadata?.name || !metadata?.description || !metadata?.category) {
             return NextResponse.json(
                 { error: 'Missing required fields' },
                 { status: 400 }
             )
         }
 
-        // Upload to IPFS
-        const upload = await pinata.upload.json(metadata)
-        const cid = upload.IpfsHash
+        if (!walletAddress) {
+            return NextResponse.json(
+                { error: 'Wallet address required' },
+                { status: 400 }
+            )
+        }
 
-        console.log('Metadata uploaded to IPFS:', cid)
+        // Initialize Supabase client
+        const supabase = createServerSupabaseClient()
 
-        // Convert CID to bytes32 using keccak256
-        const cidBytes32 = keccak256(toBytes(cid))
+        // Insert metadata into Supabase
+        const { data, error } = await supabase
+            .from('agent_metadata')
+            .insert({
+                wallet_address: walletAddress,
+                name: metadata.name,
+                description: metadata.description,
+                category: metadata.category,
+                endpoint: metadata.endpoint || null,
+                capabilities: metadata.capabilities || null,
+                price: metadata.price || null,
+            })
+            .select('id')
+            .single()
+
+        if (error) {
+            console.error('Supabase insert error:', error)
+            return NextResponse.json(
+                { error: 'Failed to save metadata', details: error.message },
+                { status: 500 }
+            )
+        }
+
+        const uuid = data.id
+        console.log('Metadata saved to Supabase:', uuid)
+
+        // Convert UUID to bytes32 for contract storage
+        // UUID format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx (36 chars with dashes)
+        // Remove dashes and convert to bytes, then hash for consistent bytes32
+        const uuidBytes = toBytes(`0x${uuid.replace(/-/g, '')}`)
+        const bytes32 = keccak256(uuidBytes)
 
         return NextResponse.json({
             success: true,
-            cid,
-            bytes32: cidBytes32,
-            gatewayUrl: `https://${process.env.PINATA_GATEWAY || 'gateway.pinata.cloud'}/ipfs/${cid}`
+            id: uuid,
+            bytes32,
         })
 
     } catch (error) {
-        console.error('IPFS upload error:', error)
+        console.error('Metadata upload error:', error)
         return NextResponse.json(
-            { error: 'Failed to upload metadata to IPFS', details: error instanceof Error ? error.message : 'Unknown error' },
+            { error: 'Failed to save metadata', details: error instanceof Error ? error.message : 'Unknown error' },
             { status: 500 }
         )
     }
