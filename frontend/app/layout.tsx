@@ -3,6 +3,7 @@ import type { Metadata } from "next"
 import { Manrope } from "next/font/google"
 import { Analytics } from "@vercel/analytics/next"
 import { LenisProvider } from "@/components/providers/lenis-provider"
+import { Web3Provider } from "@/components/providers/web3-provider"
 import "./globals.css"
 
 const manrope = Manrope({
@@ -48,7 +49,9 @@ export default function RootLayout({
         />
       </head>
       <body className={`${manrope.variable} font-sans antialiased bg-zinc-950 text-zinc-100`}>
-        <LenisProvider>{children}</LenisProvider>
+        <Web3Provider>
+          <LenisProvider>{children}</LenisProvider>
+        </Web3Provider>
         <Analytics />
       </body>
     </html>

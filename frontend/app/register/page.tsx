@@ -1,16 +1,22 @@
 "use client"
 
 import { useState } from "react"
+import { useAccount, useWriteContract, useWaitForTransactionReceipt } from "wagmi"
 import { Navbar } from "@/components/ui/navbar"
 import { FooterSection } from "@/components/sections/footer-section"
-import { Check, ChevronRight, Code, DollarSign, Info, Wallet } from "lucide-react"
+import { ConnectWalletButton } from "@/components/ui/connect-wallet-button"
+import { Check, ChevronRight, Code, DollarSign, Info, Wallet, Loader2, ExternalLink } from "lucide-react"
+import { WORKER_REGISTRY_ABI, WORKER_REGISTRY_ADDRESS, type WorkerMetadata } from "@/lib/contracts/worker-registry"
+import { uploadMetadataToIPFS } from "@/lib/ipfs"
 
 const steps = [
     { id: 1, name: "Basic Info", icon: Info },
     { id: 2, name: "Service Config", icon: Code },
     { id: 3, name: "Pricing", icon: DollarSign },
-    { id: 4, name: "Wallet", icon: Wallet },
+    { id: 4, name: "Register", icon: Wallet },
 ]
+
+type TransactionStatus = "idle" | "uploading" | "signing" | "pending" | "success" | "error"
 
 export default function RegisterPage() {
     const [currentStep, setCurrentStep] = useState(1)
@@ -21,11 +27,63 @@ export default function RegisterPage() {
         endpoint: "",
         price: "",
         capabilities: "",
-        wallet: "",
     })
+    const [txStatus, setTxStatus] = useState<TransactionStatus>("idle")
+    const [errorMessage, setErrorMessage] = useState<string>("")
+
+    const { address, isConnected } = useAccount()
+    const { data: hash, writeContract, isPending: isWritePending } = useWriteContract()
+    const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ hash })
 
     const updateForm = (key: string, value: string) => {
         setFormData(prev => ({ ...prev, [key]: value }))
+    }
+
+    const handleRegister = async () => {
+        if (!isConnected || !address) {
+            setErrorMessage("Please connect your wallet first")
+            setTxStatus("error")
+            return
+        }
+
+        try {
+            setTxStatus("uploading")
+            setErrorMessage("")
+
+            // Prepare metadata
+            const metadata: WorkerMetadata = {
+                name: formData.name,
+                description: formData.description,
+                category: formData.category,
+                endpoint: formData.endpoint,
+                capabilities: formData.capabilities,
+                price: formData.price,
+            }
+
+            // Upload to IPFS
+            const metadataPointer = await uploadMetadataToIPFS(metadata)
+
+            setTxStatus("signing")
+
+            // Call contract
+            writeContract({
+                address: WORKER_REGISTRY_ADDRESS,
+                abi: WORKER_REGISTRY_ABI,
+                functionName: "register",
+                args: [metadataPointer],
+            })
+
+            setTxStatus("pending")
+        } catch (error) {
+            console.error("Registration error:", error)
+            setErrorMessage(error instanceof Error ? error.message : "Registration failed")
+            setTxStatus("error")
+        }
+    }
+
+    // Update status based on transaction state
+    if (isSuccess && txStatus !== "success") {
+        setTxStatus("success")
     }
 
     return (
@@ -34,14 +92,19 @@ export default function RegisterPage() {
 
             <section className="pt-32 pb-24 px-6">
                 <div className="max-w-4xl mx-auto">
-                    {/* Header */}
-                    <div className="text-center mb-12">
-                        <h1 className="font-display text-4xl md:text-5xl font-bold text-zinc-100 mb-4">
-                            Register Your Agent
-                        </h1>
-                        <p className="text-lg text-zinc-500">
-                            Start earning CRO by providing AI services to the Econos ecosystem
-                        </p>
+                    {/* Header with Wallet Button */}
+                    <div className="mb-8">
+                        <div className="text-center mb-6">
+                            <h1 className="font-display text-4xl md:text-5xl font-bold text-zinc-100 mb-4">
+                                Register Your Agent
+                            </h1>
+                            <p className="text-lg text-zinc-500">
+                                Start earning zkCRO by providing AI services to the Econos ecosystem
+                            </p>
+                        </div>
+                        <div className="flex justify-end">
+                            <ConnectWalletButton />
+                        </div>
                     </div>
 
                     {/* Progress Steps */}
@@ -56,10 +119,10 @@ export default function RegisterPage() {
                                         <div className={`flex flex-col items-center ${idx < steps.length - 1 ? "flex-1" : ""}`}>
                                             <div
                                                 className={`w-12 h-12 rounded-full flex items-center justify-center border-2 transition-all ${isComplete
-                                                        ? "bg-zinc-100 border-zinc-100"
-                                                        : isCurrent
-                                                            ? "bg-zinc-800 border-zinc-600"
-                                                            : "bg-zinc-900 border-zinc-800"
+                                                    ? "bg-zinc-100 border-zinc-100"
+                                                    : isCurrent
+                                                        ? "bg-zinc-800 border-zinc-600"
+                                                        : "bg-zinc-900 border-zinc-800"
                                                     }`}
                                             >
                                                 {isComplete ? (
@@ -128,7 +191,12 @@ export default function RegisterPage() {
                         {currentStep === 2 && (
                             <div className="space-y-6">
                                 <div>
-                                    <label className="block text-sm font-medium text-zinc-300 mb-2">Endpoint URL</label>
+                                    <label className="block text-sm font-medium text-zinc-300 mb-2">
+                                        API Endpoint URL
+                                        <span className="block text-xs text-zinc-500 font-normal mt-1">
+                                            Master agents will call this URL to use your service
+                                        </span>
+                                    </label>
                                     <input
                                         type="url"
                                         value={formData.endpoint}
@@ -159,7 +227,7 @@ export default function RegisterPage() {
                         {currentStep === 3 && (
                             <div className="space-y-6">
                                 <div>
-                                    <label className="block text-sm font-medium text-zinc-300 mb-2">Price per Call (CRO)</label>
+                                    <label className="block text-sm font-medium text-zinc-300 mb-2">Price per Call (zkCRO)</label>
                                     <input
                                         type="number"
                                         step="0.01"
@@ -177,7 +245,7 @@ export default function RegisterPage() {
 app.post('/v1/inference',
   EconosMiddleware({
     price: ${formData.price || '0.05'},
-    asset: 'CRO',
+    asset: 'zkCRO',
     recipient: '0xYourWallet...'
   }),
   async (req, res) => {
@@ -190,43 +258,101 @@ app.post('/v1/inference',
                             </div>
                         )}
 
-                        {/* Step 4: Wallet */}
+                        {/* Step 4: Register */}
                         {currentStep === 4 && (
                             <div className="space-y-6">
-                                <div>
-                                    <label className="block text-sm font-medium text-zinc-300 mb-2">Cronos Wallet Address</label>
-                                    <input
-                                        type="text"
-                                        value={formData.wallet}
-                                        onChange={(e) => updateForm("wallet", e.target.value)}
-                                        placeholder="0x..."
-                                        className="w-full px-4 py-3 rounded-xl bg-zinc-950 border border-zinc-800 text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-zinc-700"
-                                    />
-                                </div>
-                                <div className="p-6 rounded-xl bg-zinc-950/50 border border-zinc-800/30">
-                                    <h4 className="text-sm font-semibold text-zinc-300 mb-3">Review Your Registration</h4>
-                                    <div className="space-y-2 text-sm">
-                                        <div className="flex justify-between">
-                                            <span className="text-zinc-500">Agent Name:</span>
-                                            <span className="text-zinc-300">{formData.name || "—"}</span>
-                                        </div>
-                                        <div className="flex justify-between">
-                                            <span className="text-zinc-500">Category:</span>
-                                            <span className="text-zinc-300">{formData.category || "—"}</span>
-                                        </div>
-                                        <div className="flex justify-between">
-                                            <span className="text-zinc-500">Price:</span>
-                                            <span className="text-zinc-300">{formData.price ? `${formData.price} CRO` : "—"}</span>
-                                        </div>
-                                        <div className="flex justify-between">
-                                            <span className="text-zinc-500">Endpoint:</span>
-                                            <span className="text-zinc-300 truncate ml-4 max-w-xs">{formData.endpoint || "—"}</span>
-                                        </div>
+                                {!isConnected ? (
+                                    <div className="p-6 rounded-xl bg-zinc-950/50 border border-zinc-800/30 text-center">
+                                        <Wallet className="w-12 h-12 mx-auto mb-4 text-zinc-500" />
+                                        <h4 className="text-sm font-semibold text-zinc-300 mb-2">Connect Your Wallet</h4>
+                                        <p className="text-xs text-zinc-500 mb-4">
+                                            Please connect your wallet to register your agent
+                                        </p>
                                     </div>
-                                </div>
-                                <button className="w-full py-4 rounded-xl bg-zinc-100 text-zinc-900 font-semibold hover:bg-zinc-200 transition-colors">
-                                    Submit to Registry
-                                </button>
+                                ) : (
+                                    <>
+                                        <div>
+                                            <label className="block text-sm font-medium text-zinc-300 mb-2">Wallet Address</label>
+                                            <input
+                                                type="text"
+                                                value={address}
+                                                disabled
+                                                className="w-full px-4 py-3 rounded-xl bg-zinc-950 border border-zinc-800 text-zinc-500 cursor-not-allowed"
+                                            />
+                                        </div>
+                                        <div className="p-6 rounded-xl bg-zinc-950/50 border border-zinc-800/30">
+                                            <h4 className="text-sm font-semibold text-zinc-300 mb-3">Review Your Registration</h4>
+                                            <div className="space-y-2 text-sm">
+                                                <div className="flex justify-between">
+                                                    <span className="text-zinc-500">Agent Name:</span>
+                                                    <span className="text-zinc-300">{formData.name || "—"}</span>
+                                                </div>
+                                                <div className="flex justify-between">
+                                                    <span className="text-zinc-500">Category:</span>
+                                                    <span className="text-zinc-300">{formData.category || "—"}</span>
+                                                </div>
+                                                <div className="flex justify-between">
+                                                    <span className="text-zinc-500">Price:</span>
+                                                    <span className="text-zinc-300">{formData.price ? `${formData.price} zkCRO` : "—"}</span>
+                                                </div>
+                                                <div className="flex justify-between">
+                                                    <span className="text-zinc-500">Endpoint:</span>
+                                                    <span className="text-zinc-300 truncate ml-4 max-w-xs">{formData.endpoint || "—"}</span>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* Transaction Status */}
+                                        {txStatus !== "idle" && (
+                                            <div className={`p-4 rounded-xl border ${txStatus === "success"
+                                                ? "bg-green-950/50 border-green-800/30"
+                                                : txStatus === "error"
+                                                    ? "bg-red-950/50 border-red-800/30"
+                                                    : "bg-blue-950/50 border-blue-800/30"
+                                                }`}>
+                                                <div className="flex items-center gap-3">
+                                                    {(txStatus === "uploading" || txStatus === "signing" || txStatus === "pending") && (
+                                                        <Loader2 className="w-5 h-5 animate-spin text-blue-400" />
+                                                    )}
+                                                    {txStatus === "success" && (
+                                                        <Check className="w-5 h-5 text-green-400" />
+                                                    )}
+                                                    <div className="flex-1">
+                                                        <p className="text-sm font-medium text-zinc-200">
+                                                            {txStatus === "uploading" && "Uploading metadata to IPFS..."}
+                                                            {txStatus === "signing" && "Please sign the transaction..."}
+                                                            {txStatus === "pending" && "Transaction pending..."}
+                                                            {txStatus === "success" && "Agent registered successfully!"}
+                                                            {txStatus === "error" && "Registration failed"}
+                                                        </p>
+                                                        {errorMessage && (
+                                                            <p className="text-xs text-red-400 mt-1">{errorMessage}</p>
+                                                        )}
+                                                        {hash && (
+                                                            <a
+                                                                href={`https://explorer.zkevm.cronos.org/tx/${hash}`}
+                                                                target="_blank"
+                                                                rel="noopener noreferrer"
+                                                                className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1 mt-1"
+                                                            >
+                                                                View on Explorer <ExternalLink className="w-3 h-3" />
+                                                            </a>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        <button
+                                            onClick={handleRegister}
+                                            disabled={isWritePending || isConfirming || txStatus === "success"}
+                                            className="w-full py-4 rounded-xl bg-zinc-100 text-zinc-900 font-semibold hover:bg-zinc-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                                        >
+                                            {(isWritePending || isConfirming) && <Loader2 className="w-5 h-5 animate-spin" />}
+                                            {txStatus === "success" ? "Registered!" : "Submit to Registry"}
+                                        </button>
+                                    </>
+                                )}
                             </div>
                         )}
                     </div>
