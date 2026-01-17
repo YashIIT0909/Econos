@@ -22,24 +22,8 @@ import { createSummaryGenerationAgent } from '../services/summary-generation/age
 import { createResearcherAgent } from '../services/researcher/agent';
 import { createWriterAgent } from '../services/writer/agent';
 import { createMarketResearchAgent } from '../services/market-research/agent';
+import { getAgent, Agent } from '../services/agentFactory';
 
-/**
- * Agent interface for executing tasks
- */
-interface Agent {
-    execute(input: unknown): Promise<unknown>;
-}
-
-/**
- * Map service names to agent factories
- */
-const agentFactories: Record<string, () => Agent> = {
-    'image-generation': createImageGenerationAgent,
-    'summary-generation': createSummaryGenerationAgent,
-    'researcher': createResearcherAgent,
-    'writer': createWriterAgent,
-    'market-research': createMarketResearchAgent,
-};
 
 /**
  * Authorization data storage
@@ -97,9 +81,9 @@ export class TaskCoordinator {
      */
     private getAgent(serviceName: string): Agent | undefined {
         if (!this.agents[serviceName]) {
-            const factory = agentFactories[serviceName];
-            if (factory) {
-                this.agents[serviceName] = factory();
+            const agent = getAgent(serviceName);
+            if (agent) {
+                this.agents[serviceName] = agent;
             }
         }
         return this.agents[serviceName];

@@ -4,6 +4,7 @@ import { generateManifest } from './registry/manifest';
 import { getWorkerAddress, cronosConfig } from './config/cronos';
 import { getServiceNames } from './config/services';
 import { logger } from './utils/logger';
+import { getAgent } from './services/agentFactory';
 
 // Import coordinator module
 import { getTaskCoordinator, registerAuthorization, TaskAuthorization } from './coordinator';
@@ -118,6 +119,50 @@ app.get('/tasks', (_req: Request, res: Response) => {
 app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
     logger.error('Unhandled error', { error: err.message, stack: err.stack });
     res.status(500).json({ error: 'internal_error', message: 'An unexpected error occurred' });
+});
+
+/**
+ * Inference endpoint - execute task and return data synchronously
+ * This allows the Master Agent's pipeline to get the result immediately
+ */
+app.post('/inference/:serviceId', async (req: Request, res: Response) => {
+    // 1. Fix the serviceId type issue
+    const rawServiceId = req.params.serviceId;
+    const serviceId = Array.isArray(rawServiceId) ? rawServiceId[0] : rawServiceId;
+
+    // 2. Define 'input' from the request body
+    const input = req.body; 
+
+    // 3. Get the agent
+    const agent = getAgent(serviceId);
+    
+    if (!agent) {
+        res.status(404).json({ 
+            error: 'service_not_found', 
+            message: `Service '${serviceId}' is not supported by this worker` 
+        });
+        return;
+    }
+
+    // 4. Execute
+    try {
+        logger.info('Executing synchronous inference', { serviceId });
+        
+        // Now 'input' is defined and valid here
+        const result = await agent.execute(input);
+        
+        res.json({
+            data: result,
+            costWei: "0",
+            timestamp: Math.floor(Date.now() / 1000)
+        });
+    } catch (error) {
+        logger.error('Inference failed', { serviceId, error: String(error) });
+        res.status(500).json({ 
+            error: 'execution_failed', 
+            message: String(error) 
+        });
+    }
 });
 
 /**
