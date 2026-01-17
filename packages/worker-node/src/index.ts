@@ -1,51 +1,39 @@
 import 'dotenv/config';
 import express, { Request, Response, NextFunction } from 'express';
-import { x402Middleware, X402Request } from './middleware/x402';
-import { verifyPaymentMiddleware } from './middleware/verifyPayment';
-import { requestContextMiddleware, ContextualRequest } from './middleware/requestContext';
-import { signInferenceOutput } from './signer/sign';
 import { generateManifest } from './registry/manifest';
 import { getWorkerAddress, cronosConfig } from './config/cronos';
-import { getService, getServiceNames } from './config/services';
-import { hashObject } from './utils/hash';
-import { logger, logServiceRequest } from './utils/logger';
+import { getServiceNames } from './config/services';
+import { logger } from './utils/logger';
 
-// Import all agents
-import { createImageGenerationAgent } from './services/image-generation/agent';
-import { createSummaryGenerationAgent } from './services/summary-generation/agent';
-import { createResearcherAgent } from './services/researcher/agent';
-import { createWriterAgent } from './services/writer/agent';
-import { createMarketResearchAgent } from './services/market-research/agent';
+// Import coordinator module
+import { getTaskCoordinator, registerAuthorization, TaskAuthorization } from './coordinator';
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));
-
-// Initialize agents lazily to allow env vars to load
-let agents: Record<string, { execute: (input: unknown) => Promise<unknown> }> | null = null;
-
-function getAgents() {
-    if (!agents) {
-        agents = {
-            'image-generation': createImageGenerationAgent(),
-            'summary-generation': createSummaryGenerationAgent(),
-            'researcher': createResearcherAgent(),
-            'writer': createWriterAgent(),
-            'market-research': createMarketResearchAgent(),
-        };
-    }
-    return agents;
-}
 
 /**
  * Health check endpoint
  */
 app.get('/health', (_req: Request, res: Response) => {
+    const coordinatorEnabled = process.env.ENABLE_COORDINATOR === 'true';
+    let coordinatorStatus = null;
+
+    if (coordinatorEnabled) {
+        try {
+            const coordinator = getTaskCoordinator();
+            coordinatorStatus = coordinator.getStatus();
+        } catch {
+            coordinatorStatus = { error: 'Coordinator not initialized' };
+        }
+    }
+
     res.json({
         status: 'ok',
         worker: getWorkerAddress(),
         network: cronosConfig.networkName,
         chainId: cronosConfig.chainId,
         services: getServiceNames(),
+        coordinator: coordinatorStatus,
         timestamp: Math.floor(Date.now() / 1000),
     });
 });
@@ -58,84 +46,71 @@ app.get('/manifest', (_req: Request, res: Response) => {
 });
 
 /**
- * Unified inference endpoint
- * POST /inference/:serviceName
+ * Authorization endpoint - register task authorization before on-chain deposit
  * 
- * Flow:
- * 1. x402 middleware - check for payment
- * 2. verifyPayment middleware - verify on-chain payment
- * 3. requestContext middleware - generate request ID
- * 4. Agent execution
- * 5. Sign response with EIP-191
- * 6. Return signed response
+ * This is the x402 flow entry point:
+ * 1. Master agent calls POST /authorize/:taskId with EIP-712 signature
+ * 2. Master agent deposits to NativeEscrow contract
+ * 3. Worker receives TaskCreated event and processes using the registered authorization
+ * 4. Worker submits result and receives payment from escrow
  */
-app.post(
-    '/inference/:serviceName',
-    x402Middleware as express.RequestHandler,
-    verifyPaymentMiddleware as express.RequestHandler,
-    requestContextMiddleware as express.RequestHandler,
-    async (req: Request, res: Response) => {
-        const contextReq = req as ContextualRequest;
-        const serviceName = contextReq.serviceName!;
-        const requestId = contextReq.requestId;
-        const timestamp = contextReq.requestTimestamp;
+app.post('/authorize/:taskId', (req: Request, res: Response) => {
+    const rawTaskId = req.params.taskId;
+    const taskId: string = Array.isArray(rawTaskId) ? rawTaskId[0] : rawTaskId;
+    const auth = req.body as TaskAuthorization;
 
-        logServiceRequest(serviceName, requestId, 'start');
-
-        try {
-            const service = getService(serviceName);
-            if (!service) {
-                res.status(404).json({ error: 'not_found', message: `Service '${serviceName}' not found` });
-                return;
-            }
-
-            const agentMap = getAgents();
-            const agent = agentMap[serviceName];
-            if (!agent) {
-                res.status(500).json({ error: 'agent_not_found', message: 'Agent implementation not found' });
-                return;
-            }
-
-            // Execute agent
-            const outputData = await agent.execute(req.body);
-
-            // Create response hash and sign
-            const responseHash = hashObject(outputData);
-            const signed = await signInferenceOutput(serviceName, requestId, outputData, timestamp);
-
-            // Construct final response
-            const response = {
-                data: outputData,
-                signature: signed.signature,
-                requestId,
-                worker: getWorkerAddress(),
-                timestamp,
-                serviceName,
-                responseHash,
-            };
-
-            logServiceRequest(serviceName, requestId, 'complete');
-            res.json(response);
-        } catch (error) {
-            logServiceRequest(serviceName, requestId, 'error', { error: String(error) });
-
-            if (error instanceof Error && error.name === 'ZodError') {
-                res.status(400).json({
-                    error: 'validation_error',
-                    message: 'Invalid input schema',
-                    details: error,
-                });
-                return;
-            }
-
-            res.status(500).json({
-                error: 'execution_error',
-                message: 'Failed to execute service',
-                requestId,
-            });
-        }
+    if (!auth.message || !auth.signature || !auth.payload) {
+        res.status(400).json({
+            error: 'invalid_authorization',
+            message: 'Missing message, signature, or payload',
+            required: {
+                message: 'EIP-712 TaskAuthorization message (taskId, worker, expiresAt, nonce)',
+                signature: 'EIP-712 signature from master agent',
+                payload: 'Task payload containing serviceName and params',
+            },
+        });
+        return;
     }
-);
+
+    registerAuthorization(taskId, auth);
+
+    logger.info('Authorization registered via HTTP', { taskId });
+
+    res.json({
+        success: true,
+        taskId,
+        message: 'Authorization registered. Proceed with on-chain deposit to NativeEscrow.',
+        nextStep: 'Call NativeEscrow.depositTask(taskId, workerAddress, duration) with payment',
+    });
+});
+
+/**
+ * Tasks endpoint - list all tasks (for monitoring)
+ */
+app.get('/tasks', (_req: Request, res: Response) => {
+    const coordinatorEnabled = process.env.ENABLE_COORDINATOR === 'true';
+
+    if (!coordinatorEnabled) {
+        res.status(503).json({
+            error: 'coordinator_disabled',
+            message: 'Task coordinator is not enabled. Set ENABLE_COORDINATOR=true in .env',
+        });
+        return;
+    }
+
+    try {
+        const coordinator = getTaskCoordinator();
+        res.json({
+            tasks: coordinator.getTasks(),
+            stats: coordinator.getStatus().stats,
+        });
+    } catch (error) {
+        res.status(500).json({
+            error: 'coordinator_error',
+            message: String(error),
+        });
+    }
+});
 
 /**
  * Error handler
@@ -146,17 +121,33 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
 });
 
 /**
- * Start server
+ * Start server and coordinator
  */
 const PORT = parseInt(process.env.PORT || '3001', 10);
+const ENABLE_COORDINATOR = process.env.ENABLE_COORDINATOR === 'true';
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, async () => {
     logger.info(`🚀 Worker Node started`, {
         port: PORT,
         worker: getWorkerAddress(),
         network: cronosConfig.networkName,
         services: getServiceNames(),
+        coordinatorEnabled: ENABLE_COORDINATOR,
     });
+
+    // Start coordinator if enabled
+    if (ENABLE_COORDINATOR) {
+        try {
+            const coordinator = getTaskCoordinator();
+            await coordinator.start();
+            logger.info('✅ Task Coordinator started - listening for on-chain events');
+        } catch (error) {
+            logger.error('❌ Failed to start Task Coordinator', { error });
+            console.error('Task Coordinator failed to start. Check contract addresses in .env');
+        }
+    }
+
+    const coordStatus = ENABLE_COORDINATOR ? '🟢 Active' : '⚪ Disabled';
 
     console.log(`
 ╔══════════════════════════════════════════════════════════════╗
@@ -166,15 +157,42 @@ app.listen(PORT, () => {
 ║  Port:     ${String(PORT).padEnd(49)}║
 ║  Worker:   ${getWorkerAddress().slice(0, 42).padEnd(49)}║
 ║  Network:  ${cronosConfig.networkName.padEnd(49)}║
+║  Coordinator: ${coordStatus.padEnd(46)}║
 ╠══════════════════════════════════════════════════════════════╣
 ║  Endpoints:                                                  ║
 ║    GET  /health           - Health check                     ║
 ║    GET  /manifest         - Service discovery                ║
-║    POST /inference/:name  - Paid AI inference                ║
+║    GET  /tasks            - List coordinator tasks           ║
+║    POST /authorize/:id    - Register task authorization      ║
 ╠══════════════════════════════════════════════════════════════╣
 ║  Services: ${getServiceNames().join(', ').padEnd(49)}║
 ╚══════════════════════════════════════════════════════════════╝
   `);
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+    logger.info('SIGTERM received, shutting down...');
+    if (ENABLE_COORDINATOR) {
+        const coordinator = getTaskCoordinator();
+        coordinator.stop();
+    }
+    server.close(() => {
+        logger.info('Server closed');
+        process.exit(0);
+    });
+});
+
+process.on('SIGINT', () => {
+    logger.info('SIGINT received, shutting down...');
+    if (ENABLE_COORDINATOR) {
+        const coordinator = getTaskCoordinator();
+        coordinator.stop();
+    }
+    server.close(() => {
+        logger.info('Server closed');
+        process.exit(0);
+    });
 });
 
 export default app;

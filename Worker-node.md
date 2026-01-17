@@ -79,12 +79,16 @@ worker-node/
 │
 │   ├── config/
 │   │   ├── cronos.ts              # RPC, chainId, confirmations
-│   │   └── services.ts            # Price & metadata per service
+│   │   ├── services.ts            # Price & metadata per service
+│   │   └── contracts.ts           # Contract addresses
 │
-│   ├── middleware/
-│   │   ├── x402.ts                # HTTP 402 logic
-│   │   ├── verifyPayment.ts       # On-chain tx verification
-│   │   └── requestContext.ts      # requestId, service binding
+│   ├── coordinator/               # x402 Task Coordinator
+│   │   ├── index.ts               # Module exports
+│   │   ├── taskCoordinator.ts     # Main orchestrator
+│   │   ├── contractService.ts     # NativeEscrow/Registry interface
+│   │   ├── authorizationVerifier.ts # EIP-712 verification
+│   │   ├── taskStateManager.ts    # Task lifecycle tracking
+│   │   └── resultCanonicalizer.ts # Deterministic hashing
 │
 │   ├── services/
 │   │   ├── image-generation/
@@ -115,18 +119,13 @@ worker-node/
 │   │       ├── agent.ts
 │   │       ├── prompt.txt
 │   │       ├── tools.ts
-│   │       ├── priceFeed.ts       # Crypto.com MCP / markets
+│   │       ├── priceFeed.ts       # Crypto.com API integration
 │   │       └── schema.ts
-│
-│   ├── signer/
-│   │   ├── sign.ts                # EIP-191 signing
-│   │   └── verify.ts
 │
 │   ├── registry/
 │   │   └── manifest.ts            # Service manifests
 │
 │   └── utils/
-│       ├── hash.ts
 │       └── logger.ts
 │
 ├── .env.example
@@ -134,12 +133,155 @@ worker-node/
 ```
 
 - **config/cronos.ts** defines RPC URL, chainId, and confirmation depth for Cronos zkEVM testnet interactions.
-- **config/services.ts** centralizes service pricing, IDs, and metadata bound on-chain registry entries.
-- **middleware/** handles payment requirements, verification, and request context binding.
+- **config/services.ts** centralizes service pricing, IDs, and metadata.
+- **config/contracts.ts** stores NativeEscrow, WorkerRegistry, and Paymaster addresses.
+- **coordinator/** handles the x402 flow: events, authorization, execution, and settlement.
 - **services/** contains independent AI service implementations, each with prompt, tools, and schema.
-- **signer/** provides EIP-191 signing and verification utilities.
 
 ---
+
+## 📊 x402 Task Coordinator Architecture
+
+The worker-node includes a **coordinator module** that handles all x402 protocol concerns (events, authorization, contracts, settlement) while delegating compute to individual agents.
+
+```mermaid
+flowchart TB
+    subgraph OnChain["🔗 On-Chain (Cronos zkEVM)"]
+        escrow["NativeEscrow"]
+        registry["WorkerRegistry"]
+        paymaster["AgentPaymaster"]
+    end
+
+    subgraph Coordinator["📋 coordinator/"]
+        taskCoord["taskCoordinator.ts<br/>Main orchestrator"]
+        contractSvc["contractService.ts<br/>Contract interface"]
+        authVerify["authorizationVerifier.ts<br/>EIP-712 verification"]
+        stateManager["taskStateManager.ts<br/>Task lifecycle"]
+        resultCanon["resultCanonicalizer.ts<br/>Hash computation"]
+    end
+
+    subgraph Agents["🤖 services/"]
+        imgAgent["image-generation"]
+        sumAgent["summary-generation"]
+        resAgent["researcher"]
+        wriAgent["writer"]
+        mktAgent["market-research"]
+    end
+
+    subgraph External["🌐 External"]
+        master["Master Agent"]
+        gemini["Gemini API"]
+    end
+
+    %% Master creates task
+    master -->|"1. depositTask()"| escrow
+    escrow -->|"2. TaskCreated event"| contractSvc
+    contractSvc -->|"3. Event callback"| taskCoord
+
+    %% Authorization flow
+    taskCoord -->|"4. Verify signature"| authVerify
+    authVerify -->|"5. Check task"| contractSvc
+    taskCoord -->|"6. Update state"| stateManager
+
+    %% Compute flow
+    taskCoord -->|"7. Dispatch compute"| Agents
+    Agents -->|"8. AI inference"| gemini
+    Agents -->|"9. Result"| taskCoord
+
+    %% Settlement flow
+    taskCoord -->|"10. Canonicalize"| resultCanon
+    resultCanon -->|"11. Hash"| taskCoord
+    taskCoord -->|"12. submitWork()"| contractSvc
+    contractSvc -->|"13. Via Paymaster"| paymaster
+    paymaster -->|"14. Gasless tx"| escrow
+    escrow -->|"15. TaskCompleted + Payment"| taskCoord
+```
+
+---
+
+## 🔄 Task Lifecycle Flow
+
+```mermaid
+sequenceDiagram
+    participant Master as Master Agent
+    participant Escrow as NativeEscrow
+    participant Coord as TaskCoordinator
+    participant Auth as AuthVerifier
+    participant Agent as Service Agent
+    participant Paymaster as AgentPaymaster
+
+    Master->>Escrow: depositTask(taskId, worker, duration) + zkTCRO
+    Escrow-->>Coord: TaskCreated event
+
+    Note over Coord: State: PENDING
+
+    Coord->>Auth: verifyTaskAuthorization(signature)
+    alt Invalid signature
+        Auth-->>Coord: Reject
+        Note over Coord: State: FAILED
+    else Valid signature
+        Auth-->>Coord: Authorized
+        Note over Coord: State: AUTHORIZED
+    end
+
+    Coord->>Escrow: Verify task is OPEN
+    Escrow-->>Coord: Task data
+
+    Note over Coord: State: RUNNING
+
+    Coord->>Agent: execute(payload)
+    Agent-->>Coord: Result JSON
+
+    Coord->>Coord: canonicalize(result) → resultHash
+
+    Note over Coord: State: SUBMITTED
+
+    Coord->>Paymaster: submitWork(taskId, resultHash)
+    Paymaster->>Escrow: Forward (gasless)
+    Escrow-->>Coord: TaskCompleted event + Payment
+
+    Note over Coord: State: COMPLETED
+```
+
+---
+
+## 📁 Coordinator Module Structure
+
+| File | Purpose |
+|------|---------|
+| `coordinator/taskCoordinator.ts` | Main x402 orchestrator - event handling, dispatch, settlement |
+| `coordinator/contractService.ts` | Contract interface for NativeEscrow, WorkerRegistry |
+| `coordinator/authorizationVerifier.ts` | EIP-712 signature verification, nonce tracking |
+| `coordinator/taskStateManager.ts` | Task lifecycle state machine (PENDING → COMPLETED) |
+| `coordinator/resultCanonicalizer.ts` | Deterministic JSON serialization and hashing |
+
+---
+
+## 🔑 Where is GEMINI_API_KEY Used?
+
+**All 5 agents** use the Gemini API via `process.env.GEMINI_API_KEY`:
+
+| File | Model | Library |
+|------|-------|---------|
+| `image-generation/agent.ts` | `gemini-2.5-flash-image` | `@google/genai` |
+| `summary-generation/agent.ts` | `gemini-2.5-flash` | `@google/generative-ai` |
+| `researcher/agent.ts` | `gemini-2.5-flash` | `@google/generative-ai` |
+| `writer/agent.ts` | `gemini-2.5-flash` | `@google/generative-ai` |
+| `market-research/agent.ts` | `gemini-2.5-flash` | `@google/generative-ai` |
+
+---
+
+## 🟠 Where is Crypto.com API Used?
+
+The **Crypto.com Exchange API** is used in the `market-research` service only:
+
+| File | Purpose | API Endpoint |
+|------|---------|--------------|
+| `market-research/priceFeed.ts` | Fetches live crypto prices | `https://api.crypto.com/exchange/v1/public/get-tickers` |
+
+---
+
+
 
 ## 5️⃣ Unified Inference Endpoint
 
@@ -185,119 +327,120 @@ The Crypto.com AI Agent SDK lets services query Cronos zkEVM, Cronos EVM, and Cr
 
 - Each service has **exactly one** single-purpose agent for predictability.
 - Agents receive structured requests, call only approved tools, and return strictly validated JSON.
-- Agents never handle payment, transaction verification, or signing; those concerns remain in middleware and `signer/`.
+- Agents never handle payment or authorization; those concerns are handled by the **coordinator module**.
 
 > **SDK = Intelligence**  
 > **Worker Node = Economy + Trust**
 
 ---
 
-## 7️⃣ x402 Payment Implementation
+## 7️⃣ x402 Payment Implementation (Escrow-Based)
 
-### `middleware/x402.ts`
+The worker uses an **escrow-based payment model** where funds are deposited to a smart contract before task execution.
 
-- Inspects each incoming `/inference/:serviceName` request for a valid payment header (e.g., `X-Payment`).
-- If missing or invalid, returns an **HTTP 402 Payment Required** response with a JSON body describing:
-  - Service price in CRO (or zkTCRO on testnet)
-  - Worker payout address on Cronos zkEVM
-  - ChainId and network details for payment
+### Flow Overview
 
-### `middleware/verifyPayment.ts`
+1. **Master agent** calls `POST /authorize/:taskId` with EIP-712 signed authorization
+2. **Master agent** deposits funds to `NativeEscrow.depositTask()` on-chain
+3. **Worker** receives `TaskCreated` event via the coordinator
+4. **Worker** verifies the EIP-712 signature from step 1
+5. **Worker** executes the appropriate agent
+6. **Worker** calls `submitWork(taskId, resultHash)` on-chain
+7. **Escrow** automatically pays the worker and emits `TaskCompleted`
 
-On retried requests with `X-Payment: {txHash}`, the worker verifies:
+### Authorization Endpoint
 
-1. Transaction exists on Cronos zkEVM via RPC or explorer API
-2. Recipient equals the worker's configured address
-3. Transferred amount is ≥ required service price
-4. Sufficient block confirmations (finality) on zkEVM
-5. **Single-use txHash** enforcement to avoid replay across requests
+```http
+POST /authorize/:taskId
+Content-Type: application/json
 
-This pattern prevents **free inference** and **replay attacks**, ensuring trust-minimized, verifiable settlement.
+{
+  "message": {
+    "taskId": "0x...",       // bytes32
+    "worker": "0x...",       // worker address
+    "expiresAt": 1736956800, // unix timestamp
+    "nonce": 1               // replay protection
+  },
+  "signature": "0x...",      // EIP-712 signature from master
+  "payload": {
+    "serviceName": "market-research",
+    "params": { "tokens": ["BTC", "ETH"] }
+  }
+}
+```
+
+### Why Escrow?
+
+- **Trust-minimized**: Funds are locked before work begins
+- **Automatic settlement**: Worker is paid immediately upon `submitWork()`
+- **Slashing support**: Failed/expired tasks can slash worker reputation
+- **Gasless for workers**: `AgentPaymaster` sponsors `submitWork()` gas
 
 ---
 
-## 8️⃣ Signed Inference (EIP-191)
+## 8️⃣ Result Submission & Verification
 
-### `signer/sign.ts`
+### `coordinator/resultCanonicalizer.ts`
 
-After successful payment verification and agent execution, the worker signs:
+After agent execution, the worker:
 
-- `serviceName`
-- `requestId`
-- `responseHash` (hash of the JSON payload)
-- `timestamp`
+1. **Canonicalizes** the result (sorts keys, deterministic JSON)
+2. **Computes hash** using Keccak-256
+3. **Submits on-chain** via `NativeEscrow.submitWork(taskId, resultHash)`
 
-Using EIP-191–compatible personal message signing so that consumers can verify signatures off-chain with the known worker address.
+The result hash serves as a commitment that can be verified by the master agent.
 
-### `signer/verify.ts`
+### `coordinator/authorizationVerifier.ts`
 
-Provides helper utilities to verify signatures and recover the signer address from the message and EIP-191 signature.
+Before executing any task, the worker verifies:
 
-**Why This Matters**
-
-- Prevents inference spoofing by untrusted relays
-- Enables reputation and slashing mechanisms tied to mis-signed outputs
-- Makes historical inferences auditable and attributable to a specific on-chain identity
+- EIP-712 signature is valid
+- Signer matches the task's `master` address
+- Authorization has not expired
+- Nonce has not been replayed
 
 ---
 
 ## 9️⃣ Runtime Flow (End-to-End)
 
 1. **Registry discovery**
-   - Master Agent queries `ObolRegistry` on Cronos zkEVM for `serviceName`, endpoint, price, and worker address
+   - Master Agent queries `WorkerRegistry` for active workers and capabilities
 
-2. **Initial inference attempt**
-   - Master Agent sends `POST /inference/{service}` without payment header
+2. **Pre-authorization**
+   - Master Agent calls `POST /authorize/:taskId` with EIP-712 signature and task payload
 
-3. **HTTP 402 response**
-   - Worker returns **402 Payment Required** with structured x402 payment requirements
+3. **Escrow deposit**
+   - Master Agent calls `NativeEscrow.depositTask(taskId, worker, duration)` with payment
 
-4. **On-chain payment (x402 settlement)**
-   - Master Agent pays the specified amount in CRO / zkTCRO on Cronos zkEVM
-   - Obtains the transaction hash
+4. **Event processing**
+   - Worker's `TaskCoordinator` receives `TaskCreated` event
+   - Verifies the pre-registered authorization
 
-5. **Retry with proof of payment**
-   - Master Agent sends `POST /inference/{service}` again with `X-Payment: {txHash}` header
-
-6. **On-chain payment verification**
-   - Worker confirms tx is valid, final, and not previously used
-
-7. **Agent execution**
+5. **Agent execution**
    - Worker dispatches to appropriate `services/{serviceName}/agent.ts`
-   - Uses Crypto.com AI Agent SDK and tools to produce structured output
+   - Uses Gemini API and tools to produce structured output
 
-8. **Signed inference**
-   - Worker hashes the response
-   - Binds it to `serviceName`, `requestId`, and `timestamp`
-   - Signs via EIP-191 using the worker key
+6. **Result submission**
+   - Worker canonicalizes output and computes `resultHash`
+   - Calls `submitWork(taskId, resultHash)` via Paymaster (gasless)
 
-9. **HTTP 200 success response**
+7. **Settlement**
+   - `NativeEscrow` transfers payment to worker
+   - Emits `TaskCompleted` event
+   - Worker marks task as COMPLETED
 
-   ```json
-   {
-     "data": { /* structured JSON output */ },
-     "signature": "0x...",
-     "requestId": "uuid-or-hash",
-     "worker": "0xWorkerAddress",
-     "timestamp": 1736870400
-   }
-   ```
-
-10. **Verification by Master Agent**
-    - Verifies EIP-191 signature matches expected worker address
-    - Checks freshness and non-reuse of `requestId`
-
-11. **Downstream decision execution**
-    - Trigger trades, alerts, storage, or further agent-to-agent workflows
+8. **Downstream processing**
+   - Master Agent can verify the `resultHash` against the off-chain result
+   - Trigger trades, alerts, storage, or further agent-to-agent workflows
 
 ---
 
 ## 🔁 Core Mental Model
 
-> **Worker Node = AI Service Factory with an Economic Gate**  
-> **Every response = Paid + Signed + Verifiable**
+> **Worker Node = AI Service Factory with Escrow Settlement**  
+> **Every response = Authorized + Hashed + Paid via Smart Contract**
 
-Econos composes Cronos zkEVM, x402-style HTTP 402 payment flows, and Crypto.com AI Agent SDK into a fully agentic, machine-to-machine economic protocol where agents discover, pay, verify, and execute services entirely on-chain and off-chain without human intermediation.
+Econos composes Cronos zkEVM, escrow-based payment flows, and Gemini AI into a fully agentic, machine-to-machine economic protocol where agents discover, authorize, pay, and execute services with on-chain guarantees.
 
 ---
 
