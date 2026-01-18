@@ -130,4 +130,8 @@ contract WorkerRegistry is Ownable {
             w.registrationTime
         );
     }
+<<<<<<< HEAD
 }
+=======
+}
+>>>>>>> 7d49e71 (fix: Added public getter for workers)
