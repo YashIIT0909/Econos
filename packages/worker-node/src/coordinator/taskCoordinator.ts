@@ -12,14 +12,10 @@
 import { getContractService, ContractService, TaskCreatedEvent, toBytes32 } from './contractService';
 import { getAuthorizationVerifier, AuthorizationVerifier, TaskAuthorization } from './authorizationVerifier';
 import { getTaskStateManager, TaskStateManager, TaskState } from './taskStateManager';
-import { computeResultHash, prepareResult } from './resultCanonicalizer';
 import { getWorkerAddress } from '../config/cronos';
 import { logger } from '../utils/logger';
 import { resultStore } from '../index'; 
 import { ethers } from 'ethers';
-
-// Import agent factory functions
-
 import { getAgent, Agent } from '../services/agentFactory';
 
 
@@ -208,38 +204,44 @@ export class TaskCoordinator {
     /**
      * Execute the compute task
      */
-    private async executeTask(
-        taskId: string,
-        serviceName: string,
-        params: unknown
-    ): Promise<void> {
-        // Mark as running
+    private async executeTask(taskId: string, serviceName: string, params: unknown): Promise<void> {
         this.stateManager.markRunning(taskId);
 
         try {
-            // Get agent
             const agent = this.getAgent(serviceName);
-            if (!agent) {
-                throw new Error(`Unknown service: ${serviceName}`);
-            }
+            if (!agent) throw new Error(`Unknown service: ${serviceName}`);
 
             logger.info('Executing task', { taskId, serviceName });
-
-            // Execute agent
+            
+            // 1. Run AI
             const result = await agent.execute(params);
 
-            // 2. SAVE RESULT (Transient Storage)
-            // We store the full data so the Master Agent can fetch it later
-            logger.info(`💾 Saving result for ${taskId} to memory store...`);
-            resultStore.set(taskId, result);
-
-            // 3. PREPARE HASH (Proof of Work)
-            // If result is object, stringify it first to ensure consistent hashing
+            // 2. Prepare Hash
             const resultString = typeof result === 'string' ? result : JSON.stringify(result);
             const resultHash = ethers.keccak256(ethers.toUtf8Bytes(resultString));
 
-            // 4. SUBMIT HASH TO BLOCKCHAIN
-            await this.submitResult(taskId, resultHash);
+            // 3. SIGN THE HASH (The Gasless Magic)
+            // We sign: keccak256(taskId + resultHash)
+            const messageHash = ethers.solidityPackedKeccak256(
+                ['bytes32', 'bytes32'], 
+                [taskId, resultHash]
+            );
+            
+            // Use the wallet from ContractService to sign
+            const signature = await this.contractService.getWallet().signMessage(ethers.getBytes(messageHash));
+
+            logger.info('✍️  Signed result (Gasless)', { taskId });
+
+            // 4. Store Proof in Memory (API will serve this)
+            resultStore.set(taskId, {
+                data: result,
+                resultHash: resultHash,
+                signature: signature,
+                status: 'completed'
+            });
+
+            // 5. Update State (Waiting for Relay)
+            this.stateManager.markSubmitted(taskId, resultHash, "pending_relay");
 
         } catch (error) {
             logger.error('Task execution failed', { taskId, error });
@@ -247,38 +249,18 @@ export class TaskCoordinator {
         }
     }
 
-    /**
-     * Submit result to chain
-     */
-    private async submitResult(taskId: string, resultHash: string): Promise<void> {
-        try {
-            logger.info('Submitting result hash on-chain', { taskId, resultHash });
-
-            // Submit to contract (Gasless Paymaster handles the cost)
-            const txHash = await this.contractService.submitWork(taskId, resultHash);
-
-            this.stateManager.markSubmitted(taskId, resultHash, txHash);
-            logger.info('Result submitted', { taskId, txHash });
-
-        } catch (error) {
-            logger.error('Failed to submit result', { taskId, error });
-            this.stateManager.markFailed(taskId, `Submit failed: ${error}`);
-        }
-    }
 
     /**
      * Handle TaskCompleted event (confirmation)
      */
     private handleTaskCompleted(taskId: string, resultHash: string): void {
-        logger.info('TaskCompleted event received', { taskId, resultHash });
-
+        logger.info('TaskCompleted confirmed on-chain', { taskId });
         const task = this.stateManager.getTask(taskId);
-        if (task && task.state === TaskState.SUBMITTED) {
+        
+        // If we were waiting for relay, mark as done
+        if (task) {
             this.stateManager.markCompleted(taskId);
-            logger.info('Task fully completed, payment received', {
-                taskId,
-                amount: task.amount.toString(),
-            });
+            logger.info('💰 Payment Secured', { taskId, amount: task.amount.toString() });
         }
     }
 
@@ -307,13 +289,7 @@ export class TaskCoordinator {
 
 // Singleton instance
 let coordinatorInstance: TaskCoordinator | null = null;
-
-/**
- * Get the singleton TaskCoordinator instance
- */
 export function getTaskCoordinator(): TaskCoordinator {
-    if (!coordinatorInstance) {
-        coordinatorInstance = new TaskCoordinator();
-    }
+    if (!coordinatorInstance) coordinatorInstance = new TaskCoordinator();
     return coordinatorInstance;
 }

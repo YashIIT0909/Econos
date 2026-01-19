@@ -6,10 +6,9 @@
  * 3. Encodes resultHash correctly to match the 0xcfdf46c7 selector.
  */
 
-import { Provider, Wallet, Contract, utils } from 'zksync-ethers'; // CRITICAL: Use zksync-ethers
-import { ethers } from 'ethers';
-import { getWorkerAddress, cronosConfig } from '../config/cronos';
+import { ethers, Wallet, Contract, JsonRpcProvider, EventLog } from 'ethers';
 import { getContractAddresses } from '../config/contracts';
+import { cronosConfig } from '../config/cronos';
 import { logger } from '../utils/logger';
 
 /**
@@ -18,13 +17,8 @@ import { logger } from '../utils/logger';
  */
 const ESCROW_ABI = [
     'event TaskCreated(bytes32 indexed taskId, address master, address worker, uint256 amount)',
-    // Updated Event: result is now 'bytes'
     'event TaskCompleted(bytes32 indexed taskId, bytes result)',
-    'event TaskRefunded(bytes32 indexed taskId)',
     'function tasks(bytes32) view returns (address master, address worker, uint256 amount, uint256 deadline, uint8 status)',
-    // Updated Function: _result is now 'bytes'
-    // This matches selector 0xcfdf46c7 required by your Paymaster
-    'function submitWork(bytes32 _taskId, bytes calldata _result) external',
 ];
 
 const REGISTRY_ABI = [
@@ -55,7 +49,7 @@ export interface TaskCreatedEvent {
 }
 
 export class ContractService {
-    private provider: Provider;
+    private provider: JsonRpcProvider;
     private wallet: Wallet;
     private escrowContract: Contract;
     private registryContract: Contract;
@@ -63,29 +57,32 @@ export class ContractService {
 
     constructor() {
         const addresses = getContractAddresses();
-        
-        // 1. Initialize zkSync Provider
-        this.provider = new Provider(cronosConfig.rpcUrl);
 
-        // 2. Initialize zkSync Wallet (Required for EIP-712 signing)
+        console.log("---------------------------------------------------");
+        console.log("🔍 DEBUG: Contract Service Initialization");
+        console.log("   RPC URL:", cronosConfig.rpcUrl);
+        console.log("   Escrow Address:", addresses.nativeEscrow);
+        console.log("   Registry Address:", addresses.workerRegistry);
+        console.log("   Worker Private Key Set?", !!process.env.WORKER_PRIVATE_KEY);
+        console.log("---------------------------------------------------");
+        // -----------------------------
+        
+        // 1. Initialize Standard EVM Provider (Cronos Testnet)
+        this.provider = new JsonRpcProvider(cronosConfig.rpcUrl);
+
+        // 2. Initialize Wallet (For SIGNING only, not paying gas)
         const privateKey = process.env.WORKER_PRIVATE_KEY;
         if (!privateKey) throw new Error('WORKER_PRIVATE_KEY is not set');
         
         this.wallet = new Wallet(privateKey, this.provider);
         this.workerAddress = this.wallet.address;
 
-        // 3. Connect Escrow Contract to zkSync Wallet
-        this.escrowContract = new Contract(
-            addresses.nativeEscrow,
-            ESCROW_ABI,
-            this.wallet 
-        );
-
-        this.registryContract = new Contract(
-            addresses.workerRegistry,
-            REGISTRY_ABI,
-            this.provider
-        );
+        // 3. Connect Contracts (Read-Only or Signing)
+        this.escrowContract = new Contract(addresses.nativeEscrow, ESCROW_ABI, this.provider);
+        this.registryContract = new Contract(addresses.workerRegistry, REGISTRY_ABI, this.provider);
+    }
+    getWallet(): Wallet {
+        return this.wallet;
     }
 
     async getTask(taskIdBytes32: string): Promise<OnChainTask | null> {
@@ -121,47 +118,7 @@ export class ContractService {
     /**
      * Submit work result via Paymaster (Gasless)
      */
-    async submitWork(taskIdBytes32: string, resultHash: string): Promise<string> {
-        logger.info('Submitting work on-chain (Gasless)', { taskId: taskIdBytes32, resultHash });
-
-        const addresses = getContractAddresses();
-
-        try {
-            // 1. Construct Paymaster Params (General Flow)
-            const paymasterParams = utils.getPaymasterParams(addresses.paymaster, {
-                type: 'General',
-                innerInput: new Uint8Array(),
-            });
-
-            // 2. Convert result string to bytes
-            // Since the contract expects 'bytes', we encode the string.
-            const resultBytes = ethers.toUtf8Bytes(resultHash);
-
-            // 3. Send Transaction with customData
-            const tx = await this.escrowContract.submitWork(taskIdBytes32, resultBytes, {
-                customData: {
-                    gasPerPubdata: utils.DEFAULT_GAS_PER_PUBDATA_LIMIT,
-                    paymasterParams: paymasterParams,
-                },
-            });
-
-            logger.info('submitWork transaction sent', { txHash: tx.hash });
-
-            const receipt = await tx.wait();
-
-            logger.info('submitWork confirmed', {
-                txHash: receipt.hash,
-                blockNumber: receipt.blockNumber,
-                gasUsed: receipt.gasUsed.toString(), // Should be 0 cost to worker wallet
-            });
-
-            return receipt.hash;
-        } catch (error) {
-            logger.error('Failed to submit work', { taskId: taskIdBytes32, error });
-            throw error;
-        }
-    }
-
+   
     async isWorkerActive(): Promise<boolean> {
         try {
             return await this.registryContract.isWorkerActive(this.workerAddress);
@@ -181,67 +138,32 @@ export class ContractService {
             if (!isRunning) return;
 
             try {
-                // 1. Get current block number
                 const currentBlock = await this.provider.getBlockNumber();
-                
-                // Initialize start block on first run
-                if (lastBlockChecked === 0) {
-                    lastBlockChecked = currentBlock - 5; // Look back 5 blocks to be safe
-                }
+                if (lastBlockChecked === 0) lastBlockChecked = currentBlock - 100;
 
-                // If we are up to date, wait and try again
-                if (lastBlockChecked >= currentBlock) {
-                    setTimeout(pollEvents, 3000);
-                    return;
-                }
+                if (lastBlockChecked < currentBlock) {
+                    const filter = this.escrowContract.filters.TaskCreated();
+                    const events = await this.escrowContract.queryFilter(filter, lastBlockChecked + 1, currentBlock);
 
-                // 2. Query logs from lastChecked+1 to currentBlock
-                // This is a standard HTTP request, not a fragile WebSocket filter
-                const filter = this.escrowContract.filters.TaskCreated();
-                const events = await this.escrowContract.queryFilter(
-                    filter, 
-                    lastBlockChecked + 1, 
-                    currentBlock
-                );
-
-                // 3. Process events
-                for (const event of events) {
-                    if (event instanceof ethers.EventLog) {
-                        const [taskId, master, worker, amount] = event.args;
-                        
-                        // Client-side filtering: Is this for me?
-                        if (worker.toLowerCase() === this.workerAddress.toLowerCase()) {
-                            logger.info('👀 Polling found new task!', { taskId });
-                            callback({ 
-                                taskId, 
-                                master, 
-                                worker, 
-                                amount: BigInt(amount) 
-                            });
+                    for (const event of events) {
+                        if (event instanceof EventLog) {
+                            const [taskId, master, worker, amount] = event.args;
+                            if (worker.toLowerCase() === this.workerAddress.toLowerCase()) {
+                                logger.info('👀 Polling found new task!', { taskId });
+                                callback({ taskId, master, worker, amount });
+                            }
                         }
                     }
+                    lastBlockChecked = currentBlock;
                 }
+            } catch (error) { /* squelch */ }
 
-                // Update checkpoint
-                lastBlockChecked = currentBlock;
-
-            } catch (error) {
-                logger.warn('Polling error (retrying in 3s)...', { error: (error as Error).message });
-            }
-
-            // Schedule next poll
             setTimeout(pollEvents, 3000);
         };
 
-        // Start the loop
         logger.info('Started Task Polling (Robust Mode)', { worker: this.workerAddress });
         pollEvents();
-
-        // Return unsubscribe function
-        return () => {
-            isRunning = false;
-            logger.info('Stopped Task Polling');
-        };
+        return () => { isRunning = false; };
     }
 
     /**
@@ -253,49 +175,27 @@ export class ContractService {
 
         const pollCompletion = async () => {
             if (!isRunning) return;
-
             try {
                 const currentBlock = await this.provider.getBlockNumber();
-                
-                if (lastBlockChecked === 0) {
-                    lastBlockChecked = currentBlock - 100; // Check recent history
-                }
+                if (lastBlockChecked === 0) lastBlockChecked = currentBlock - 100;
 
-                if (lastBlockChecked >= currentBlock) {
-                    setTimeout(pollCompletion, 3000);
-                    return;
-                }
+                if (lastBlockChecked < currentBlock) {
+                    const filter = this.escrowContract.filters.TaskCompleted();
+                    const events = await this.escrowContract.queryFilter(filter, lastBlockChecked + 1, currentBlock);
 
-                // Query logs safely (No Filter ID to crash)
-                const filter = this.escrowContract.filters.TaskCompleted();
-                const events = await this.escrowContract.queryFilter(
-                    filter, 
-                    lastBlockChecked + 1, 
-                    currentBlock
-                );
-
-                for (const event of events) {
-                    if (event instanceof ethers.EventLog) {
-                        const [taskId, resultHash] = event.args;
-                        // We pass every completion to the coordinator
-                        // The coordinator decides if it cares about this taskId
-                        callback(taskId, resultHash);
+                    for (const event of events) {
+                        if (event instanceof EventLog) {
+                            const [taskId, resultHash] = event.args;
+                            callback(taskId, resultHash);
+                        }
                     }
+                    lastBlockChecked = currentBlock;
                 }
-
-                lastBlockChecked = currentBlock;
-
-            } catch (error) {
-                // Squelch errors so the node doesn't crash
-                // logger.warn('Completion polling error (retrying)...');
-            }
-
+            } catch (e) { /* squelch */ }
             setTimeout(pollCompletion, 3000);
         };
 
-        // Start the loop
         pollCompletion();
-
         return () => { isRunning = false; };
     }
 
@@ -308,18 +208,11 @@ export class ContractService {
     }
 }
 
-let contractServiceInstance: ContractService | null = null;
-
+let instance: ContractService | null = null;
 export function getContractService(): ContractService {
-    if (!contractServiceInstance) {
-        contractServiceInstance = new ContractService();
-    }
-    return contractServiceInstance;
+    if (!instance) instance = new ContractService();
+    return instance;
 }
-
-export function toBytes32(taskId: string): string {
-    if (taskId.startsWith('0x') && taskId.length === 66) {
-        return taskId;
-    }
-    return ethers.keccak256(ethers.toUtf8Bytes(taskId));
+export function toBytes32(id: string): string {
+    return id.startsWith('0x') && id.length === 66 ? id : ethers.keccak256(ethers.toUtf8Bytes(id));
 }

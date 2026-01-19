@@ -1,26 +1,35 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.0;
 
 import "forge-std/Script.sol";
 import "forge-std/console.sol";
 import "../src/WorkerRegistry.sol";
 import "../src/NativeEscrow.sol";
-import "../src/AgentPaymaster.sol";
 
-contract DeployMarketplace is Script {
+
+contract DeployCronos is Script {
     function run() external {
-        uint256 deployerKey = vm.envUint("PRIVATE_KEY");
-        vm.startBroadcast(deployerKey);
+        // 1. Load the deployer private key from .env
+        // Make sure your .env has PRIVATE_KEY=0x... (without quotes)
+        uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
+        
+        vm.startBroadcast(deployerPrivateKey);
 
-        // 🔒 HARD-CODED ESCROW ADDRESS
-        address escrow = 0x5c28841B6d3F6A100F054Bd45813073E397D27ec;
+        // 2. Deploy WorkerRegistry
+        WorkerRegistry registry = new WorkerRegistry();
+        console.log("--------------------------------------------------");
+        console.log("WorkerRegistry deployed at:", address(registry));
 
-        // (Optional) sanity check: ensure it's a contract
-        require(escrow.code.length > 0, "Escrow address is not a contract");
+        // 3. Deploy NativeEscrow
+        // Pass the Registry address to the constructor
+        NativeEscrow escrow = new NativeEscrow(address(registry));
+        console.log("NativeEscrow deployed at:  ", address(escrow));
 
-        // Deploy Paymaster linked to escrow
-        AgentPaymaster paymaster = new AgentPaymaster(escrow);
-        console.log("AgentPaymaster deployed at:", address(paymaster));
+        // 4. CRITICAL: Link Registry to Escrow
+        // We must authorize the Escrow contract to call slashReputation()
+        registry.setEscrowContract(address(escrow));
+        console.log("Registry linked to Escrow (Slashing Authorized)");
+        console.log("--------------------------------------------------");
 
         vm.stopBroadcast();
     }

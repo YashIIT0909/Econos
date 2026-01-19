@@ -25,16 +25,18 @@ export const WORKER_REGISTRY_ABI = [
  * NativeEscrow ABI - Updated to match the "Gasless" version
  */
 export const NATIVE_ESCROW_ABI = [
-    'function depositTask(bytes32 _taskId, address _worker, uint256 _duration) payable',
-    // CHANGED: string -> bytes
-    'function submitWork(bytes32 _taskId, bytes calldata _result)',
-    'function refundAndSlash(bytes32 _taskId)',
-    'function tasks(bytes32) view returns (address master, address worker, uint256 amount, uint256 deadline, uint8 status)',
-    'event TaskCreated(bytes32 indexed taskId, address master, address worker, uint256 amount)',
-    // CHANGED: string -> bytes
-    'event TaskCompleted(bytes32 indexed taskId, bytes result)',
-    'event TaskRefunded(bytes32 indexed taskId)',
-    'event TaskDisputed(bytes32 indexed taskId)',
+   
+    "event TaskCreated(bytes32 indexed taskId, address master, address worker, uint256 amount)",
+    "event TaskCompleted(bytes32 indexed taskId, bytes result)",
+    "event TaskRefunded(bytes32 indexed taskId)",
+    
+    // Read Functions
+    "function tasks(bytes32) view returns (address master, address worker, uint256 amount, uint256 deadline, uint8 status)",
+    
+    // Write Functions
+    "function depositTask(bytes32 _taskId, address _worker, uint256 _duration) external payable",
+    
+    "function submitWorkRelayed(bytes32 _taskId, bytes calldata _resultHash, bytes calldata _signature) external"
 ];
 
 /**
