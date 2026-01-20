@@ -15,7 +15,11 @@ export const contractAddresses = {
  */
 export const WORKER_REGISTRY_ABI = [
     'function workers(address) view returns (address walletAddress, bytes32 metadataPointer, uint8 reputation, bool isActive, uint256 registrationTime)',
+    'function workerAddresses(uint256) view returns (address)',
     'function isWorkerActive(address _worker) view returns (bool)',
+    'function getAllWorkers() view returns (bytes32[])',
+    'function getWorkerCount() view returns (uint256)',
+    'function getWorker(address _worker) view returns (address walletAddress, bytes32 metadataPointer, uint8 reputation, bool isActive, uint256 registrationTime)',
     'event WorkerRegistered(address indexed worker, bytes32 metadata)',
     'event WorkerSlashed(address indexed worker, address indexed slasher, uint8 newScore)',
     'event WorkerBanned(address indexed worker)',
@@ -25,17 +29,17 @@ export const WORKER_REGISTRY_ABI = [
  * NativeEscrow ABI - Updated to match the "Gasless" version
  */
 export const NATIVE_ESCROW_ABI = [
-   
+
     "event TaskCreated(bytes32 indexed taskId, address master, address worker, uint256 amount)",
     "event TaskCompleted(bytes32 indexed taskId, bytes result)",
     "event TaskRefunded(bytes32 indexed taskId)",
-    
+
     // Read Functions
     "function tasks(bytes32) view returns (address master, address worker, uint256 amount, uint256 deadline, uint8 status)",
-    
+
     // Write Functions
     "function depositTask(bytes32 _taskId, address _worker, uint256 _duration) external payable",
-    
+
     "function submitWorkRelayed(bytes32 _taskId, bytes calldata _resultHash, bytes calldata _signature) external"
 ];
 

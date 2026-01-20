@@ -3,6 +3,10 @@ import { WorkerWithMetadata, WorkerManifest } from '../types/worker';
 import { ServiceCapability, CapabilitySummary } from '../types/pipeline';
 import { logger } from '../utils/logger';
 
+// Supabase URL for fetching agent metadata
+const SUPABASE_URL = process.env.SUPABASE_URL || 'https://jmbqxdlzfktohtakeyxo.supabase.co';
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || '';
+
 /**
  * Capability Discovery Service
  * 
@@ -52,6 +56,60 @@ export class CapabilityDiscovery {
     }
 
     /**
+     * Fetch agent metadata from Supabase by their bytes32 IDs
+     */
+    private async fetchAgentsFromSupabase(metadataPointers: string[]): Promise<Map<string, any>> {
+        const agentMap = new Map<string, any>();
+
+        if (!SUPABASE_URL || metadataPointers.length === 0) {
+            return agentMap;
+        }
+
+        try {
+            const response = await fetch(`${SUPABASE_URL}/rest/v1/agents?id=in.(${metadataPointers.map(p => `"${p}"`).join(',')})`, {
+                headers: {
+                    'apikey': SUPABASE_ANON_KEY,
+                    'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                },
+            });
+
+            if (response.ok) {
+                const agents = await response.json() as Array<{ wallet_address?: string;[key: string]: unknown }>;
+                for (const agent of agents) {
+                    agentMap.set(agent.wallet_address?.toLowerCase() || '', agent);
+                }
+            }
+        } catch (error) {
+            logger.warn('Failed to fetch agents from Supabase', { error: String(error) });
+        }
+
+        return agentMap;
+    }
+
+    /**
+     * Discover workers from the contract and fetch their capabilities
+     */
+    async discoverFromContract(): Promise<void> {
+        try {
+            logger.info('Discovering workers from contract...');
+            const contractWorkers = await this.indexer.getAllWorkersFromContract();
+
+            for (const worker of contractWorkers) {
+                // Try to get endpoint from Supabase metadata or use default
+                // For now, we'll need endpoints to be provided or discovered
+                logger.info('Found contract worker', {
+                    address: worker.address,
+                    metadataPointer: worker.metadataPointer
+                });
+            }
+
+            logger.info('Contract discovery complete', { count: contractWorkers.length });
+        } catch (error) {
+            logger.warn('Failed to discover from contract', { error: String(error) });
+        }
+    }
+
+    /**
      * Discover all capabilities from registered workers
      */
     async discoverCapabilities(): Promise<CapabilitySummary> {
@@ -63,6 +121,11 @@ export class CapabilityDiscovery {
         logger.info('Discovering worker capabilities', {
             workerCount: this.knownWorkers.size,
         });
+
+        // If no known workers, try to discover from contract
+        if (this.knownWorkers.size === 0) {
+            await this.discoverFromContract();
+        }
 
         const services: ServiceCapability[] = [];
         const serviceTypesSet = new Set<string>();

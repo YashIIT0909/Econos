@@ -113,12 +113,13 @@ export class EventListener {
             this.taskRefundedHandlers.forEach(h => h(event));
         });
 
-        // TaskDisputed event
-        this.escrowContract.on('TaskDisputed', (taskId: string) => {
-            const event: TaskDisputedEvent = { taskId };
-            logTaskEvent(taskId, 'event_disputed', 'debug');
-            this.taskDisputedHandlers.forEach(h => h(event));
-        });
+        // Note: TaskDisputed event is not in current contract
+        // If added later, uncomment this:
+        // this.escrowContract.on('TaskDisputed', (taskId: string) => {
+        //     const event: TaskDisputedEvent = { taskId };
+        //     logTaskEvent(taskId, 'event_disputed', 'debug');
+        //     this.taskDisputedHandlers.forEach(h => h(event));
+        // });
     }
 
     /**

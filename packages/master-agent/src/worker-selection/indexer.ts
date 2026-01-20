@@ -74,6 +74,35 @@ export class WorkerIndexer {
     }
 
     /**
+     * Get all workers registered on the contract
+     * This fetches directly from the blockchain like the marketplace frontend
+     */
+    async getAllWorkersFromContract(): Promise<{ address: string; metadataPointer: string }[]> {
+        try {
+            const count = await this.registryContract.getWorkerCount();
+            const workers: { address: string; metadataPointer: string }[] = [];
+
+            for (let i = 0; i < Number(count); i++) {
+                const address = await this.registryContract.workerAddresses(i);
+                const worker = await this.registryContract.workers(address);
+
+                if (worker.isActive) {
+                    workers.push({
+                        address: worker.walletAddress,
+                        metadataPointer: worker.metadataPointer, // bytes32 Supabase UUID hash
+                    });
+                }
+            }
+
+            logger.info('Fetched workers from contract', { count: workers.length });
+            return workers;
+        } catch (error) {
+            logger.error('Failed to fetch workers from contract', { error });
+            return [];
+        }
+    }
+
+    /**
      * Get active workers from a list of known addresses
      * 
      * Note: Since there's no enumeration function on the contract,
