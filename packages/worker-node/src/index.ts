@@ -180,6 +180,22 @@ app.get('/result/:taskId', (req, res) => {
     return res.status(404).json({ error: "Result not found or expired" });
 });
 
+app.get('/proof/:taskId', (req, res) => {
+    const { taskId } = req.params;
+    
+    if (resultStore.has(taskId)) {
+        const entry = resultStore.get(taskId);
+        // Only return the proof data needed for on-chain submission
+        return res.json({ 
+            success: true, 
+            proof: {
+                resultHash: entry.resultHash,
+                signature: entry.signature
+            }
+        });
+    }
+    return res.status(404).json({ error: "Proof not ready" });
+});
 /**
  * Start server and coordinator
  */
@@ -203,6 +219,7 @@ const server = app.listen(PORT, async () => {
             logger.info('✅ Task Coordinator started - listening for on-chain events');
         } catch (error) {
             logger.error('❌ Failed to start Task Coordinator', { error });
+            console.error("❌ CRITICAL STARTUP ERROR:", error); // Print full stack trace
             console.error('Task Coordinator failed to start. Check contract addresses in .env');
         }
     }

@@ -5,13 +5,6 @@ libs = ["lib"]
 solc_version = "0.8.28"
 evm_version = "cancun"
 
-# 🟢 ZK-Specific Configuration
-[profile.default.zksync]
-compile = true
-startup = true
-# Crucial for Paymasters to access system contracts
-enable_eravm_extensions = true 
-
 [rpc_endpoints]
 cronos_zkevm = "https://testnet.zkevm.cronos.org"
 

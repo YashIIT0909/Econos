@@ -4,11 +4,11 @@ import { ethers } from 'ethers';
  * Cronos zkEVM Testnet Configuration
  */
 export const cronosConfig = {
-    rpcUrl: process.env.CRONOS_RPC_URL || 'https://testnet.zkevm.cronos.org/',
-    chainId: parseInt(process.env.CRONOS_CHAIN_ID || '240', 10),
+    rpcUrl: process.env.CRONOS_RPC_URL || 'https://338.rpc.thirdweb.com/7bd99c672d1088111d153b91a2e1112d',
+    chainId: parseInt(process.env.CRONOS_CHAIN_ID || '338', 10),
     blockConfirmations: parseInt(process.env.BLOCK_CONFIRMATIONS || '2', 10),
-    networkName: 'Cronos zkEVM Sepolia Testnet',
-    currencySymbol: 'zkTCRO',
+    networkName: 'Cronos EVM Testnet (T3)',
+    currencySymbol: 'TCRO',
     explorerUrl: 'https://explorer.zkevm.cronos.org/testnet',
 };
 
