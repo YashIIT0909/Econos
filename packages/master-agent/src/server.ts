@@ -5,6 +5,7 @@ import { ethers } from 'ethers';
 import { runAgentWorkflow } from './services/workflow';
 import { getMasterWallet } from './config/cronos'; // Ensure this path matches your project structure
 import pipelineRoutes from './routes/pipeline';
+import { eventStreamer } from './services/eventStreamer';
 
 const app = express();
 app.use(cors());
@@ -588,6 +589,41 @@ app.get('/workers/contract', async (req: Request, res: Response) => {
         console.error('Contract fetch error:', error);
         return res.status(500).json({ error: error.message });
     }
+});
+
+/**
+ * SSE Endpoint for Flow Visualization
+ * Streams real-time events to connected clients
+ */
+app.get('/events', (req: Request, res: Response) => {
+    // Set SSE headers
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.flushHeaders();
+
+    console.log('📡 SSE client connected');
+
+    // Send initial connection event
+    res.write(`data: ${JSON.stringify({ type: 'connected', message: '🔌 Connected to Master Agent event stream', timestamp: Date.now() })}\n\n`);
+
+    // Subscribe to events
+    const unsubscribe = eventStreamer.addClient((event) => {
+        res.write(`data: ${JSON.stringify(event)}\n\n`);
+    });
+
+    // Heartbeat every 30 seconds to keep connection alive
+    const heartbeat = setInterval(() => {
+        res.write(`: heartbeat\n\n`);
+    }, 30000);
+
+    // Clean up on disconnect
+    req.on('close', () => {
+        console.log('📡 SSE client disconnected');
+        unsubscribe();
+        clearInterval(heartbeat);
+    });
 });
 
 // Mount Pipeline Routes

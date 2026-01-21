@@ -14,9 +14,10 @@ import { getAuthorizationVerifier, AuthorizationVerifier, TaskAuthorization } fr
 import { getTaskStateManager, TaskStateManager, TaskState } from './taskStateManager';
 import { getWorkerAddress } from '../config/cronos';
 import { logger } from '../utils/logger';
-import { resultStore } from '../index'; 
+import { resultStore } from '../index';
 import { ethers } from 'ethers';
 import { getAgent, Agent } from '../services/agentFactory';
+import { workerEventStreamer } from '../utils/eventStreamer';
 
 
 /**
@@ -144,6 +145,9 @@ export class TaskCoordinator {
             amount: amount.toString(),
         });
 
+        // Emit event for flow visualization
+        workerEventStreamer.taskCreatedEvent(taskId, ethers.formatEther(amount), master);
+
         try {
             // Get task from chain to verify and get deadline
             const onChainTask = await this.contractService.getTask(taskId);
@@ -170,6 +174,8 @@ export class TaskCoordinator {
             }
 
             // Verify authorization
+            workerEventStreamer.eip712Verify(taskId);
+
             const authResult = this.authVerifier.verifyAuthorization(
                 auth,
                 master,
@@ -181,9 +187,12 @@ export class TaskCoordinator {
                     taskId,
                     error: authResult.error,
                 });
+                workerEventStreamer.eip712Invalid(taskId, authResult.error || 'Unknown error');
                 this.stateManager.markFailed(taskId, authResult.error || 'Authorization failed');
                 return;
             }
+
+            workerEventStreamer.eip712Valid(taskId, master);
 
             // Mark authorized
             this.stateManager.markAuthorized(
@@ -212,9 +221,13 @@ export class TaskCoordinator {
             if (!agent) throw new Error(`Unknown service: ${serviceName}`);
 
             logger.info('Executing task', { taskId, serviceName });
-            
+            workerEventStreamer.taskStart(taskId, serviceName);
+
             // 1. Run AI
+            workerEventStreamer.aiStart(taskId, serviceName);
+            const startTime = Date.now();
             const result = await agent.execute(params);
+            workerEventStreamer.aiComplete(taskId, Date.now() - startTime);
 
             // 2. Prepare Hash
             const resultString = typeof result === 'string' ? result : JSON.stringify(result);
@@ -222,15 +235,18 @@ export class TaskCoordinator {
 
             // 3. SIGN THE HASH (The Gasless Magic)
             // We sign: keccak256(taskId + resultHash)
+            workerEventStreamer.signStart(taskId);
+
             const messageHash = ethers.solidityPackedKeccak256(
-                ['bytes32', 'bytes32'], 
+                ['bytes32', 'bytes32'],
                 [taskId, resultHash]
             );
-            
+
             // Use the wallet from ContractService to sign
             const signature = await this.contractService.getWallet().signMessage(ethers.getBytes(messageHash));
 
             logger.info('✍️  Signed result (Gasless)', { taskId });
+            workerEventStreamer.signComplete(taskId, resultHash);
 
             // 4. Store Proof in Memory (API will serve this)
             resultStore.set(taskId, {
@@ -239,6 +255,7 @@ export class TaskCoordinator {
                 signature: signature,
                 status: 'completed'
             });
+            workerEventStreamer.proofStored(taskId);
 
             // 5. Update State (Waiting for Relay)
             this.stateManager.markSubmitted(taskId, resultHash, "pending_relay");
@@ -256,7 +273,7 @@ export class TaskCoordinator {
     private handleTaskCompleted(taskId: string, resultHash: string): void {
         logger.info('TaskCompleted confirmed on-chain', { taskId });
         const task = this.stateManager.getTask(taskId);
-        
+
         // If we were waiting for relay, mark as done
         if (task) {
             this.stateManager.markCompleted(taskId);

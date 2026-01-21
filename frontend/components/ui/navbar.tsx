@@ -6,6 +6,7 @@ const navLinks = [
   { href: "/", label: "Home" },
   { href: "/marketplace", label: "Marketplace" },
   { href: "/canvas", label: "Workflows" },
+  { href: "/flow", label: "Flow" },
   { href: "/register", label: "Register Agent" },
   { href: "/master-agent", label: "Master Agent" },
 ]

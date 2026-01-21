@@ -1,15 +1,18 @@
 import 'dotenv/config';
 import express, { Request, Response, NextFunction } from 'express';
+import cors from 'cors';
 import { generateManifest } from './registry/manifest';
 import { getWorkerAddress, cronosConfig } from './config/cronos';
 import { getServiceNames } from './config/services';
 import { logger } from './utils/logger';
 import { getAgent } from './services/agentFactory';
+import { workerEventStreamer } from './utils/eventStreamer';
 
 // Import coordinator module
 import { getTaskCoordinator, registerAuthorization, TaskAuthorization } from './coordinator';
 export const resultStore = new Map<string, any>();
 const app = express();
+app.use(cors());
 app.use(express.json({ limit: '1mb' }));
 
 /**
@@ -75,6 +78,10 @@ app.post('/authorize/:taskId', (req: Request, res: Response) => {
 
     registerAuthorization(taskId, auth);
 
+    // Emit event for flow visualization
+    workerEventStreamer.authReceived(taskId);
+    workerEventStreamer.authStored(taskId);
+
     logger.info('Authorization registered via HTTP', { taskId });
 
     res.json({
@@ -131,15 +138,15 @@ app.post('/inference/:serviceId', async (req: Request, res: Response) => {
     const serviceId = Array.isArray(rawServiceId) ? rawServiceId[0] : rawServiceId;
 
     // 2. Define 'input' from the request body
-    const input = req.body; 
+    const input = req.body;
 
     // 3. Get the agent
     const agent = getAgent(serviceId);
-    
+
     if (!agent) {
-        res.status(404).json({ 
-            error: 'service_not_found', 
-            message: `Service '${serviceId}' is not supported by this worker` 
+        res.status(404).json({
+            error: 'service_not_found',
+            message: `Service '${serviceId}' is not supported by this worker`
         });
         return;
     }
@@ -147,10 +154,10 @@ app.post('/inference/:serviceId', async (req: Request, res: Response) => {
     // 4. Execute
     try {
         logger.info('Executing synchronous inference', { serviceId });
-        
+
         // Now 'input' is defined and valid here
         const result = await agent.execute(input);
-        
+
         res.json({
             data: result,
             costWei: "0",
@@ -158,36 +165,36 @@ app.post('/inference/:serviceId', async (req: Request, res: Response) => {
         });
     } catch (error) {
         logger.error('Inference failed', { serviceId, error: String(error) });
-        res.status(500).json({ 
-            error: 'execution_failed', 
-            message: String(error) 
+        res.status(500).json({
+            error: 'execution_failed',
+            message: String(error)
         });
     }
 });
 
 app.get('/result/:taskId', (req, res) => {
     const { taskId } = req.params;
-    
+
     if (resultStore.has(taskId)) {
         const data = resultStore.get(taskId);
-        return res.status(200).json({ 
-            success: true, 
-            taskId, 
-            data 
+        return res.status(200).json({
+            success: true,
+            taskId,
+            data
         });
     }
-    
+
     return res.status(404).json({ error: "Result not found or expired" });
 });
 
 app.get('/proof/:taskId', (req, res) => {
     const { taskId } = req.params;
-    
+
     if (resultStore.has(taskId)) {
         const entry = resultStore.get(taskId);
         // Only return the proof data needed for on-chain submission
-        return res.json({ 
-            success: true, 
+        return res.json({
+            success: true,
             proof: {
                 resultHash: entry.resultHash,
                 signature: entry.signature
@@ -196,6 +203,42 @@ app.get('/proof/:taskId', (req, res) => {
     }
     return res.status(404).json({ error: "Proof not ready" });
 });
+
+/**
+ * SSE Endpoint for Flow Visualization
+ * Streams real-time worker events to connected clients
+ */
+app.get('/events', (req: Request, res: Response) => {
+    // Set SSE headers
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.flushHeaders();
+
+    console.log('📡 Worker SSE client connected');
+
+    // Send initial connection event
+    res.write(`data: ${JSON.stringify({ type: 'connected', message: '🔌 Connected to Worker Node event stream', timestamp: Date.now() })}\n\n`);
+
+    // Subscribe to events
+    const unsubscribe = workerEventStreamer.addClient((event) => {
+        res.write(`data: ${JSON.stringify(event)}\n\n`);
+    });
+
+    // Heartbeat every 30 seconds to keep connection alive
+    const heartbeat = setInterval(() => {
+        res.write(`: heartbeat\n\n`);
+    }, 30000);
+
+    // Clean up on disconnect
+    req.on('close', () => {
+        console.log('📡 Worker SSE client disconnected');
+        unsubscribe();
+        clearInterval(heartbeat);
+    });
+});
+
 /**
  * Start server and coordinator
  */

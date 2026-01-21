@@ -1,22 +1,23 @@
 import { ethers } from "ethers";
 import axios from "axios";
 // Ensure these imports point to your actual exports in src/index.ts or src/config
-import { 
-    getNativeEscrowContractWithSigner, 
-    AuthorizationSigner 
-} from "../index"; 
+import {
+    getNativeEscrowContractWithSigner,
+    AuthorizationSigner
+} from "../index";
 import { saveTaskResult, createTask } from "./db";
+import { eventStreamer } from "./eventStreamer";
 
 export interface WorkflowResult {
     taskId: string;
     txHash: string;
-    output: any; 
+    output: any;
 }
 
 export async function runAgentWorkflow(
-    taskType: string, 
-    params: any, 
-    budgetEth: string, 
+    taskType: string,
+    params: any,
+    budgetEth: string,
     workerEndpoint: string,
     workerAddress: string
 ): Promise<WorkflowResult> {
@@ -41,25 +42,31 @@ export async function runAgentWorkflow(
 
     // 2. Authorization
     console.log(`   🔐 Creating Authorization for ${workerAddress}...`);
+    eventStreamer.eip712Sign(taskId, workerAddress);
+
     const authSigner = new AuthorizationSigner();
     const signedAuth = await authSigner.createAuthorization(
-        taskId, workerAddress, expiresAt, nonce, 
+        taskId, workerAddress, expiresAt, nonce,
         { serviceName: taskType, params }
     );
 
     // 3. Register Intent (Common Failure Point)
     console.log(`   📨 Registering intent with Worker at ${workerEndpoint}...`);
+    eventStreamer.authorizeSend(taskId, workerEndpoint);
+
     try {
         await axios.post(`${workerEndpoint}/authorize/${taskId}`, {
             message: { taskId, worker: workerAddress, expiresAt, nonce },
             signature: signedAuth.signature,
             payload: { serviceName: taskType, params }
         });
-        
+
+        eventStreamer.authorizeSuccess(taskId);
+
         // Wait 2 seconds to ensure worker has stored authorization before on-chain event
         console.log(`   ⏱️  Waiting for authorization propagation...`);
         await new Promise(r => setTimeout(r, 2000));
-        
+
     } catch (error: any) {
         // Detailed Axios Error Logging
         if (error.code === 'ECONNREFUSED') {
@@ -74,23 +81,27 @@ export async function runAgentWorkflow(
 
     // 4. Deposit
     console.log(`   💰 Depositing ${budgetEth} ETH...`);
+    eventStreamer.escrowDeposit(taskId, budgetEth, workerAddress);
+
     try {
         const escrow = getNativeEscrowContractWithSigner();
         const tx = await escrow.depositTask(
-            taskId, workerAddress, 3600, 
+            taskId, workerAddress, 3600,
             { value: ethers.parseEther(budgetEth) }
         );
         console.log(`   ⏳ Deposit Tx Sent: ${tx.hash}`);
         await tx.wait();
         console.log(`   ✅ Deposit Confirmed.`);
-        
+        eventStreamer.escrowConfirmed(taskId, tx.hash);
+
         // 5. Start Polling (Background)
         const finalOutput = await pollAndRelay(taskId, workerEndpoint, escrow);
 
         return { taskId, txHash: tx.hash, output: finalOutput };
-        
+
     } catch (error: any) {
         console.error("Blockchain Deposit Error:", error);
+        eventStreamer.pipelineError(taskId, error.message);
         throw new Error(`Deposit Failed: ${error.message || error}`);
     }
 }
@@ -103,26 +114,33 @@ async function pollAndRelay(taskId: string, workerUrl: string, escrow: any) {
 
     while (Date.now() - start < TIMEOUT) {
         attempts++;
+        eventStreamer.relayPoll(taskId, attempts);
+
         try {
             const proofRes = await axios.get(`${workerUrl}/proof/${taskId}`);
             if (proofRes.data.success) {
                 const proof = proofRes.data.proof;
-                
+
+                eventStreamer.relayFound(taskId);
                 console.log(`   🚀 Relaying ${taskId} (after ${attempts} attempts)...`);
+
+                eventStreamer.relaySubmit(taskId);
                 const tx = await escrow.submitWorkRelayed(
                     taskId, proof.resultHash, proof.signature
                 );
                 await tx.wait();
+                eventStreamer.relayConfirmed(taskId, tx.hash);
 
                 const resultRes = await axios.get(`${workerUrl}/result/${taskId}`);
                 const finalData = resultRes.data.data;
 
                 await saveTaskResult(taskId, finalData);
-                
+                eventStreamer.resultReceived(taskId);
+
                 // Return data so runAgentWorkflow can grab it
                 return finalData;
             }
-        } catch (e) { 
+        } catch (e) {
             // Still waiting for worker to complete
         }
         await new Promise(r => setTimeout(r, 3000)); // Poll every 3 seconds
