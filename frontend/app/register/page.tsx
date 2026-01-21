@@ -5,7 +5,7 @@ import { useAccount, useWriteContract, useWaitForTransactionReceipt } from "wagm
 import { Navbar } from "@/components/ui/navbar"
 import { FooterSection } from "@/components/sections/footer-section"
 import { ConnectWalletButton } from "@/components/ui/connect-wallet-button"
-import { Check, ChevronRight, Code, DollarSign, Info, Wallet, Loader2, ExternalLink } from "lucide-react"
+import { Check, ChevronRight, Code, DollarSign, Info, Wallet, Loader2, ExternalLink, Download, FileCode, Terminal } from "lucide-react"
 import { WORKER_REGISTRY_ABI, WORKER_REGISTRY_ADDRESS, type WorkerMetadata } from "@/lib/contracts/worker-registry"
 import { uploadMetadata } from "@/lib/metadata"
 
@@ -15,6 +15,57 @@ const steps = [
     { id: 3, name: "Pricing", icon: DollarSign },
     { id: 4, name: "Register", icon: Wallet },
 ]
+
+// Constants for sidecar deployment
+const DOCKER_IMAGE = "yashagarwal09/econos-sidecar:latest"
+const ESCROW_ADDRESS = "0x3ffE8af5A45E9B0056634Ac4649Cd7FfAD4E6b17"
+const RPC_URL = "https://evm-t3.cronos.org/"
+
+// Generate docker-compose.yml content
+function generateDockerCompose(endpoint: string): string {
+    return `version: '3.8'
+
+services:
+  econos-sidecar:
+    image: ${DOCKER_IMAGE}
+    ports:
+      - "3001:3001"
+    env_file:
+      - .env
+    restart: unless-stopped
+`
+}
+
+// Generate .env file content
+function generateEnvFile(endpoint: string): string {
+    return `# Econos Sidecar Configuration
+# Generated for your registered agent
+
+# === REQUIRED: Add your private key below ===
+# This is the private key of the wallet you used to register.
+# KEEP THIS SECRET - never commit to version control!
+WORKER_PRIVATE_KEY=0xYOUR_PRIVATE_KEY_HERE
+
+# === Pre-configured values (do not change) ===
+ESCROW_ADDRESS=${ESCROW_ADDRESS}
+RPC_URL=${RPC_URL}
+INTERNAL_API_URL=${endpoint}
+PORT=3001
+`
+}
+
+// Download helper
+function downloadFile(content: string, filename: string) {
+    const blob = new Blob([content], { type: 'text/plain' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+}
 
 type TransactionStatus = "idle" | "uploading" | "signing" | "pending" | "success" | "error"
 
@@ -394,6 +445,67 @@ app.post('/v1/inference',
                                             </div>
                                         )}
 
+                                        {/* Deployment Package - shown on success */}
+                                        {txStatus === "success" && (
+                                            <div className="p-6 rounded-xl bg-zinc-950/50 border border-zinc-800/30">
+                                                <div className="flex items-center gap-3 mb-4">
+                                                    <div className="w-10 h-10 rounded-lg bg-green-900/50 flex items-center justify-center">
+                                                        <FileCode className="w-5 h-5 text-green-400" />
+                                                    </div>
+                                                    <div>
+                                                        <h4 className="text-sm font-semibold text-zinc-200">Deployment Package Ready</h4>
+                                                        <p className="text-xs text-zinc-500">Download and run your sidecar container</p>
+                                                    </div>
+                                                </div>
+
+                                                {/* Download Buttons */}
+                                                <div className="grid grid-cols-2 gap-3 mb-4">
+                                                    <button
+                                                        onClick={() => downloadFile(generateDockerCompose(formData.endpoint), 'docker-compose.yml')}
+                                                        className="flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-200 text-sm font-medium transition-colors"
+                                                    >
+                                                        <Download className="w-4 h-4" />
+                                                        docker-compose.yml
+                                                    </button>
+                                                    <button
+                                                        onClick={() => downloadFile(generateEnvFile(formData.endpoint), '.env')}
+                                                        className="flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-200 text-sm font-medium transition-colors"
+                                                    >
+                                                        <Download className="w-4 h-4" />
+                                                        .env
+                                                    </button>
+                                                </div>
+
+                                                {/* Setup Instructions */}
+                                                <div className="p-4 rounded-lg bg-zinc-900 border border-zinc-800">
+                                                    <h5 className="text-xs font-semibold text-zinc-300 mb-3 flex items-center gap-2">
+                                                        <Terminal className="w-4 h-4" />
+                                                        Quick Start
+                                                    </h5>
+                                                    <ol className="text-xs text-zinc-400 space-y-2">
+                                                        <li className="flex gap-2">
+                                                            <span className="text-zinc-500 font-mono">1.</span>
+                                                            <span>Save both files to a new folder</span>
+                                                        </li>
+                                                        <li className="flex gap-2">
+                                                            <span className="text-zinc-500 font-mono">2.</span>
+                                                            <span>Edit <code className="text-zinc-300 bg-zinc-800 px-1 rounded">.env</code> and replace <code className="text-zinc-300 bg-zinc-800 px-1 rounded">WORKER_PRIVATE_KEY</code> with your wallet&apos;s private key</span>
+                                                        </li>
+                                                        <li className="flex gap-2">
+                                                            <span className="text-zinc-500 font-mono">3.</span>
+                                                            <span>Run: <code className="text-zinc-300 bg-zinc-800 px-1 rounded">docker-compose up -d</code></span>
+                                                        </li>
+                                                    </ol>
+                                                    <div className="mt-3 pt-3 border-t border-zinc-800">
+                                                        <p className="text-xs text-amber-500/80 flex items-start gap-2">
+                                                            <span>⚠️</span>
+                                                            <span>Never share your private key or commit the .env file to version control</span>
+                                                        </p>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        )}
+
                                         <button
                                             onClick={handleRegister}
                                             disabled={isWritePending || isConfirming || txStatus === "success"}
@@ -431,6 +543,6 @@ app.post('/v1/inference',
             </section>
 
             <FooterSection />
-        </main>
+        </main >
     )
 }

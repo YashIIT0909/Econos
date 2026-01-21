@@ -12,8 +12,8 @@ RUN npm install
 # Copy source code
 COPY . .
 
-# Build the TypeScript
-RUN npx tsc src/server.ts --outDir dist --esModuleInterop
+# Build the TypeScript (ES2020 for private identifiers, CommonJS for Node.js compatibility)
+RUN npx tsc src/server.ts --outDir dist --esModuleInterop --target ES2020 --module CommonJS --moduleResolution node --skipLibCheck
 
 # Expose the Worker Port
 EXPOSE 3001
