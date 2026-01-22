@@ -359,6 +359,9 @@ export class MasterAgentOrchestrator {
                 
                 logger.info('Authorization registered with worker', { taskId: task.taskId });
                 
+                // Wait for worker to process authorization before blockchain event triggers
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                
             } catch (error: any) {
                 logger.warn('Failed to register authorization with worker', {
                     taskId: task.taskId,

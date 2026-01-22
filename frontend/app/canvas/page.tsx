@@ -365,6 +365,14 @@ function CanvasContent() {
                     isPolling: true,
                     isAIChat: true
                 })
+                
+                // FIXED: Use SAME polling as visual builder!
+                console.log('⏳ Waiting for task completion (using pipeline polling)...')
+                const finalResult = await waitForPipelineCompletion(data.taskId)
+                console.log('✅ Task completed:', finalResult)
+                setExecutionResult(finalResult)
+                toast.success('AI workflow completed successfully!')
+                
             } else {
                 console.log('✅ Visual Builder: Payment confirmed, executing pipeline...')
                 
@@ -384,13 +392,8 @@ function CanvasContent() {
                     isAIChat: false
                 })
                 
-                // Poll for completion based on mode
-                let finalResult;
-                if (isAIChatMode) {
-                   finalResult = await waitForAICompletion(result.taskId)
-                } else {
-                   finalResult = await waitForPipelineCompletion(result.taskId)
-                }
+                // Poll for completion
+                const finalResult = await waitForPipelineCompletion(result.taskId)
                 setExecutionResult(finalResult)
                 toast.success('Pipeline completed successfully!')
             }
@@ -398,10 +401,12 @@ function CanvasContent() {
         } catch (error: any) {
             console.error('Execution after payment error:', error)
             toast.error(error.message || 'Execution failed after payment')
+            // Clear polling state on error
+            setExecutionState(prev => ({ ...prev, isPolling: false }))
         } finally {
             setIsExecuting(false)
         }
-    }, [txHash, nodes, edges, taskDescription, executePipelineWithPayment, waitForPipelineCompletion])
+    }, [txHash, nodes, edges, taskDescription])
 
     // Trigger execution after successful payment
     useEffect(() => {
@@ -540,6 +545,8 @@ function CanvasContent() {
                                 }
                             })
                         }}
+                        executionResult={executionState.isAIChat ? executionResult : null}
+                        isExecuting={executionState.isAIChat && isExecuting}
                     />
                 )}
                 </div>

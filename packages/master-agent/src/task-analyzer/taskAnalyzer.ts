@@ -1,6 +1,7 @@
 import { GoogleGenAI } from '@google/genai';
 import { CapabilitySummary, TaskAnalysisResult, AnalyzeOptions } from '../types/pipeline';
 import { logger } from '../utils/logger';
+import { geminiPool } from '../utils/gemini-pool';
 
 /**
  * Task Analyzer
@@ -11,16 +12,7 @@ import { logger } from '../utils/logger';
  * 3. The optimal execution order
  */
 export class TaskAnalyzer {
-    private ai: GoogleGenAI;
     private model = 'gemini-2.0-flash';
-
-    constructor() {
-        const apiKey = process.env.GEMINI_API_KEY;
-        if (!apiKey) {
-            throw new Error('GEMINI_API_KEY is not set');
-        }
-        this.ai = new GoogleGenAI({ apiKey });
-    }
 
     /**
      * Analyze a task request to determine execution strategy
@@ -43,7 +35,14 @@ export class TaskAnalyzer {
         const prompt = this.buildAnalysisPrompt(request, capabilities, options);
 
         try {
-            const response = await this.ai.models.generateContent({
+            // Get a client from the key pool
+            const ai = geminiPool.getClient();
+            if (!ai) {
+                logger.warn('No Gemini API keys available, using fallback');
+                return this.createFallbackAnalysis(request, capabilities);
+            }
+
+            const response = await ai.models.generateContent({
                 model: this.model,
                 contents: prompt,
                 config: {

@@ -166,9 +166,30 @@ export class TaskCoordinator {
             );
 
             // Get authorization (should have been registered via HTTP endpoint)
-            const auth = consumeAuthorization(taskId);
+            // FIXED: Retry logic to handle race conditions where HTTP registration
+            // arrives slightly after the on-chain event
+            let auth: TaskAuthorization | undefined;
+            const maxRetries = 3;
+            const retryDelay = 1000; // 1 second
+
+            for (let attempt = 1; attempt <= maxRetries; attempt++) {
+                auth = consumeAuthorization(taskId);
+                if (auth) {
+                    break;
+                }
+
+                if (attempt < maxRetries) {
+                    logger.debug('Authorization not found, retrying...', {
+                        taskId,
+                        attempt,
+                        maxRetries
+                    });
+                    await new Promise(resolve => setTimeout(resolve, retryDelay));
+                }
+            }
+
             if (!auth) {
-                logger.error('No authorization found for task', { taskId });
+                logger.error('No authorization found for task after retries', { taskId });
                 this.stateManager.markFailed(taskId, 'No authorization data found');
                 return;
             }

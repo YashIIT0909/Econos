@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Send, Loader2 } from 'lucide-react'
 
 interface Message {
@@ -15,13 +15,16 @@ interface Message {
     }
     isLoading?: boolean
     isExecuting?: boolean
+    result?: any
 }
 
 interface ChatPanelProps {
     onRequestPayment?: (amount: string, planId: string, taskDescription: string) => void
+    executionResult?: any
+    isExecuting?: boolean
 }
 
-export function ChatPanel({ onRequestPayment }: ChatPanelProps) {
+export function ChatPanel({ onRequestPayment, executionResult, isExecuting }: ChatPanelProps) {
     const [messages, setMessages] = useState<Message[]>([
         {
             id: '1',
@@ -33,6 +36,30 @@ export function ChatPanel({ onRequestPayment }: ChatPanelProps) {
     const [input, setInput] = useState('')
     const [isAnalyzing, setIsAnalyzing] = useState(false)
     const [currentTaskDescription, setCurrentTaskDescription] = useState('')
+
+    // Update messages when execution state changes
+    useEffect(() => {
+        setMessages(prev => prev.map(msg => {
+            // Only update workflow messages
+            if (!msg.workflow) return msg
+            
+            // Update executing state
+            if (isExecuting && !msg.result) {
+                return { ...msg, isExecuting: true }
+            }
+            
+            // Update with result when execution completes
+            if (executionResult && !msg.result) {
+                return { 
+                    ...msg, 
+                    isExecuting: false,
+                    result: executionResult
+                }
+            }
+            
+            return msg
+        }))
+    }, [executionResult, isExecuting])
 
     const examplePrompts = [
         'Research Bitcoin market trends and create a summary',
@@ -173,6 +200,18 @@ export function ChatPanel({ onRequestPayment }: ChatPanelProps) {
                                                 <div className="mt-3 flex items-center gap-2 text-xs text-zinc-500">
                                                     <Loader2 className="w-4 h-4 animate-spin" />
                                                     <span>Executing workflow...</span>
+                                                </div>
+                                            )}
+                                            {message.result && (
+                                                <div className="mt-3 pt-3 border-t border-zinc-800">
+                                                    <div className="text-xs font-medium text-green-400 mb-2">
+                                                        ✓ Execution Complete
+                                                    </div>
+                                                    <div className="text-sm text-zinc-300 bg-zinc-900 rounded p-3">
+                                                        <pre className="whitespace-pre-wrap font-mono text-xs">
+                                                            {JSON.stringify(message.result.aggregatedOutput || message.result.results, null, 2)}
+                                                        </pre>
+                                                    </div>
                                                 </div>
                                             )}
                                         </div>

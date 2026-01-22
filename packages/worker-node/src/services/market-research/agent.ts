@@ -77,9 +77,40 @@ Provide a comprehensive market analysis. Return JSON:
                     dataSource: 'Crypto.com AI Agent SDK + Gemini',
                 },
             });
-        } catch (error) {
-            logger.error('MarketResearchAgent error', { error });
-            throw error;
+        } catch (error: any) {
+            // ---------------------------------------------------------
+            // FALLBACK: Mock market analysis
+            // ---------------------------------------------------------
+            logger.warn('⚠️ MarketResearchAgent failed (Rate Limit?), using mock analysis.', {
+                error: error.message || String(error)
+            });
+
+            await new Promise(resolve => setTimeout(resolve, 2000));
+
+            const mockOutput = {
+                analysis: `Market analysis for "${validatedInput.query}" over ${timeframe}. This is a mock analysis generated due to API rate limits. The market data shows ${tokens.join(', ')} activity.`,
+                insights: [
+                    { insight: "Market volatility observed across major tokens (MOCK)", sentiment: "neutral" as const },
+                    { insight: `${tokens[0]} showing sideways movement (MOCK)`, sentiment: "neutral" as const },
+                    { insight: "Trading volumes within normal ranges (MOCK)", sentiment: "neutral" as const }
+                ],
+                recommendations: [
+                    "Monitor market conditions closely (MOCK)",
+                    "Consider dollar-cost averaging strategy (MOCK)",
+                    "Stay informed about regulatory developments (MOCK)"
+                ],
+                marketData,
+                disclaimer: RISK_DISCLAIMER,
+                metadata: {
+                    query: validatedInput.query,
+                    timeframe: validatedInput.timeframe || '24h',
+                    analysisType: validatedInput.analysisType || 'comprehensive',
+                    generatedAt: Math.floor(Date.now() / 1000),
+                    dataSource: 'Mock Mode - API Rate Limit',
+                },
+            };
+
+            return mockOutput as any;
         }
     }
 }

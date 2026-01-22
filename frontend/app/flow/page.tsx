@@ -121,7 +121,8 @@ export default function FlowPage() {
             masterStream.disconnect();
             workerStream.disconnect();
         };
-    }, [autoConnect]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     const handleRefresh = useCallback(() => {
         masterStream.clearEvents();

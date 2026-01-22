@@ -14,8 +14,8 @@ import type {
 } from '../types/pipeline-types';
 
 // In-memory storage for pipeline status (could be persisted to DB)
-const pipelineStatuses = new Map<string, PipelineStatus>();
-const pipelineResults = new Map<string, PipelineResult>();
+export const pipelineStatuses = new Map<string, PipelineStatus>();
+export const pipelineResults = new Map<string, PipelineResult>();
 
 /**
  * Map generic pipeline context to service-specific parameters

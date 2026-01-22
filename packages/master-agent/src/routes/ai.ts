@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import axios from 'axios';
 import { MasterAgentOrchestrator } from '../services/masterAgentOrchestrator';
 import { logger } from '../utils/logger';
 
@@ -59,6 +60,8 @@ router.post('/analyze', async (req: Request, res: Response) => {
  * POST /ai/execute
  * Execute an AI-generated workflow with payment verification
  * Requires payment proof (transaction hash)
+ * 
+ * FIXED: Now uses the same pipeline storage as visual builder for consistency
  */
 router.post('/execute', async (req: Request, res: Response) => {
     try {
@@ -74,19 +77,114 @@ router.post('/execute', async (req: Request, res: Response) => {
 
         logger.info('AI executing task', { taskDescription, paymentTxHash });
 
+        // Import pipeline storage
+        const { pipelineStatuses, pipelineResults } = await import('../services/pipeline-executor');
+        
         // Execute workflow using MasterAgentOrchestrator  
         const result = await orchestrator.analyzeAndSubmit(taskDescription);
 
-        // Return task ID for status polling - handles both execution types
-        const taskId = result.executionType === 'single' 
-            ? (result.result as any).taskId 
-            : (result.result as any).taskId;
+        // Extract taskId correctly based on execution type
+        let taskId: string;
+        
+        if (result.executionType === 'single') {
+            // For single agent: result.result is SubmitTaskResult
+            taskId = (result.result as any).task.taskId;
+            
+            // FIXED: Store in pipeline format so visual builder polling works
+            // Initialize as running
+            pipelineStatuses.set(taskId, {
+                taskId,
+                status: 'running',
+                totalSteps: 1,
+                completedSteps: 0,
+                currentStep: 1,
+                currentAgent: 'AI Agent',
+                steps: [{ order: 1, agent: 'AI Agent', status: 'running' }]
+            });
+            
+            logger.info('Stored initial pipeline status', { taskId });
+            
+            // Start async monitoring to update when complete
+            setImmediate(async () => {
+                try {
+                    logger.info('Starting background monitoring for AI task', { taskId });
+                    
+                    // Get worker info
+                    const workers = await orchestrator.getAvailableWorkers();
+                    const task = await orchestrator.getTaskStatus(taskId);
+                    const worker = workers.find(w => 
+                        w.address.toLowerCase() === task?.assignedWorker?.toLowerCase()
+                    );
+                    
+                    if (!worker || !worker.endpoint) {
+                        logger.error('Worker endpoint not found', { taskId });
+                        return;
+                    }
+                    
+                    // Poll for result directly from worker
+                    const pollInterval = setInterval(async () => {
+                        try {
+                            // Try to fetch result from worker
+                            const resultResponse = await axios.get(
+                                `${worker.endpoint}/result/${taskId}`,
+                                { timeout: 5000 }
+                            );
+                            
+                            if (resultResponse.data && resultResponse.data.success) {
+                                // Result is ready!
+                                clearInterval(pollInterval);
+                                const resultData = resultResponse.data.data;
+                                
+                                // Store completed result
+                                pipelineStatuses.set(taskId, {
+                                    taskId,
+                                    status: 'completed',
+                                    totalSteps: 1,
+                                    completedSteps: 1,
+                                    steps: [{ order: 1, agent: 'AI Agent', status: 'completed' }]
+                                });
+                                
+                                pipelineResults.set(taskId, {
+                                    taskId,
+                                    success: true,
+                                    status: 'completed',
+                                    completedAt: Date.now(),
+                                    steps: [{ order: 1, agent: 'AI Agent', taskId, result: resultData }],
+                                    aggregatedOutput: resultData,
+                                    results: [resultData]
+                                });
+                                
+                                logger.info('AI task result fetched and stored', { taskId });
+                            }
+                        } catch (error: any) {
+                            // Result not ready yet, continue polling
+                            if (error.response?.status !== 404) {
+                                logger.debug('Polling for result', { taskId, error: error.message });
+                            }
+                        }
+                    }, 2000);
+                    
+                    // Timeout after 5 minutes
+                    setTimeout(() => {
+                        clearInterval(pollInterval);
+                        logger.warn('AI task monitoring timed out', { taskId });
+                    }, 300000);
+                } catch (error: any) {
+                    logger.error('Error monitoring AI task', { taskId, error: error.message });
+                }
+            });
+        } else {
+            // For multi-agent: already uses pipeline stores
+            taskId = (result.result as any).taskId;
+        }
+
+        logger.info('Workflow execution started', { taskId, executionType: result.executionType });
 
         res.json({
             success: result.success,
             taskId: taskId,
             executionType: result.executionType,
-            message: 'Workflow execution started. Poll /ai/status/:taskId for updates.'
+            message: 'Workflow execution started. Poll /pipeline/:taskId/status for updates.'
         });
 
     } catch (error: any) {
@@ -115,13 +213,51 @@ router.get('/status/:taskId', async (req: Request, res: Response) => {
             return res.status(404).json({ error: 'Task not found' });
         }
 
+        // FIXED: If task is completed, fetch actual result from worker
+        let resultData = null;
+        if (task.status === 'COMPLETED' && task.assignedWorker) {
+            try {
+                // Get worker endpoint (you might need to look this up from worker registry)
+                const workers = await orchestrator.getAvailableWorkers();
+                const worker = workers.find(w => w.address.toLowerCase() === task.assignedWorker?.toLowerCase());
+                
+                if (worker && worker.endpoint) {
+                    logger.info('Fetching result from worker', { taskId, endpoint: worker.endpoint });
+                    
+                    // Fetch result from worker
+                    const axios = require('axios');
+                    const resultResponse = await axios.get(`${worker.endpoint}/result/${taskId}`, {
+                        timeout: 5000
+                    });
+                    
+                    if (resultResponse.data && resultResponse.data.success) {
+                        resultData = resultResponse.data.data;
+                        logger.info('Result fetched successfully', { taskId });
+                    }
+                } else {
+                    logger.warn('Worker endpoint not found for completed task', { 
+                        taskId, 
+                        assignedWorker: task.assignedWorker 
+                    });
+                }
+            } catch (error: any) {
+                logger.error('Failed to fetch result from worker', { 
+                    taskId, 
+                    error: error.message 
+                });
+                // Don't fail the status request if result fetch fails
+                // The frontend can retry
+            }
+        }
+
         res.json({
             taskId: task.taskId,
             status: task.status,
-            result: (task as any).result || null,
+            result: resultData,
+            resultHash: task.resultHash || null,
             error: (task as any).error || null,
-            createdAt: (task as any).createdAt,
-            updatedAt: (task as any).updatedAt,
+            createdAt: task.createdAt,
+            updatedAt: task.updatedAt,
         });
 
     } catch (error: any) {

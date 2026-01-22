@@ -27,6 +27,7 @@ export const ImageGenerationOutputSchema = z.object({
         model: z.string(),
         aspectRatio: z.string(),
         generatedAt: z.number(),
+        note: z.string().optional(),
     }),
 });
 

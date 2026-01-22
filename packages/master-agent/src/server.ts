@@ -594,6 +594,41 @@ app.get('/health', (req: Request, res: Response) => {
     res.json({ status: 'ok', service: 'master-agent', timestamp: new Date().toISOString() });
 });
 
+// SSE Events endpoint for flow visualization
+import { eventStreamer } from './services/eventStreamer';
+
+app.get('/events', (req: Request, res: Response) => {
+    // Set SSE headers
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+
+    // Send initial connection event
+    res.write(`data: ${JSON.stringify({
+        type: 'connected',
+        timestamp: Date.now(),
+        message: '✅ Connected to Master Agent event stream'
+    })}\n\n`);
+
+    // Register client with event streamer
+    const removeClient = eventStreamer.addClient((event) => {
+        try {
+            res.write(`data: ${JSON.stringify(event)}\n\n`);
+        } catch (e) {
+            console.error('SSE write error:', e);
+        }
+    });
+
+    // Handle client disconnect
+    req.on('close', () => {
+        removeClient();
+        console.log('📡 SSE client disconnected from Master Agent');
+    });
+
+    console.log('📡 SSE client connected to Master Agent');
+});
+
 // Main execute endpoint with L402 payment
 app.post('/execute', paymentGuard, async (req: Request, res: Response) => {
     const { taskType, params } = req.body;
@@ -631,6 +666,7 @@ app.listen(PORT, () => {
     console.log(`📋 Endpoints:`);
     console.log(`   - POST /execute (with L402 payment)`);
     console.log(`   - GET  /health`);
+    console.log(`   - GET  /events (SSE flow visualization)`);
     console.log(`   - POST /pipeline/execute-pipeline`);
     console.log(`   - GET  /pipeline/:id/status`);
     console.log(`   - POST /ai/analyze (AI chat mode)`);
