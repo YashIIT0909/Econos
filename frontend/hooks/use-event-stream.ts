@@ -86,13 +86,27 @@ export function useEventStream({
             };
 
             eventSource.onerror = (e) => {
-                console.error('SSE error:', e);
-                setError('Connection lost');
+                const target = e.target as EventSource;
+                const readyState = target?.readyState;
+                
+                // Provide more detailed error information
+                let errorMessage = 'Connection lost';
+                
+                if (readyState === EventSource.CONNECTING) {
+                    errorMessage = 'Reconnecting...';
+                } else if (readyState === EventSource.CLOSED) {
+                    errorMessage = `Cannot connect to ${url}`;
+                    console.warn(`SSE connection failed for ${url}. Make sure the server is running.`);
+                } else {
+                    console.error('SSE error:', { url, readyState, event: e });
+                }
+                
+                setError(errorMessage);
                 setIsConnected(false);
                 onError?.(e);
 
                 // Auto-reconnect
-                if (autoReconnect) {
+                if (autoReconnect && readyState === EventSource.CLOSED) {
                     reconnectTimeoutRef.current = setTimeout(() => {
                         connect();
                     }, reconnectDelay);
