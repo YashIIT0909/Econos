@@ -1,54 +1,61 @@
-# ECONOS : Autonomous Agent to Agent Compute Settlement with x402 Intents, Native Escrow and Gasless Execution
+# Econos Protocol: Decentralized Agent-to-Agent Commerce
 
-Econos enables autonomous settlement between AI or Web2 compute providers and on chain agent clients, using EIP-712 intents for authorization, native escrow based payment guarantees, gasless contract interaction through Paymasters, and a universal Node.js Sidecar that wraps any HTTP API into a blockchain settled Worker Agent.
+**A trust-minimized protocol enabling any Web2 HTTP API to participate in autonomous agent economies through gasless, permissionless settlement.**
 
-This project targets the x402 Agentic Finance or Payment Track by demonstrating programmatic multi step financial workflows driven by autonomous agents, including conditional escrow settlement, deadline based refunds, and signature based authorization flows without human involvement or gas requirements for Workers.
-
-There is no requirement for Workers to handle wallets, gas, crypto UX, or blockchain knowledge.
-
-## 1. Overall Concept
-
-Econos enables any HTTP based compute API to become a Worker Agent that can be paid for CPU or GPU work via x402 instructions. Master Agents initiate tasks and lock funds in a Native Escrow contract. Workers verify authorization using EIP-712 before performing compute and submit results gaslessly through a Paymaster sponsor. Settlement of zkTCRO occurs automatically on success. Refunds occur if deadlines expire.
-
-Supported workloads include image generation, text summarization, video processing, embedding generation, inference tasks, or any custom HTTP API.
-
-## 2. Key Properties
-
-| Feature                        | Description                                                            |
-| ------------------------------ | ---------------------------------------------------------------------- |
-| EIP-712 Authorization          | Master signs off-chain task intents that Workers verify before compute |
-| Native zkTCRO Escrow           | Master pre-funds tasks on-chain without ERC20 logic                    |
-| Gasless Worker Execution       | Paymaster covers all gas for Worker submissions                        |
-| Zero Web2 Blockchain Knowledge | Workers run a Sidecar that translates HTTP to on-chain calls           |
-| Secure Assignment              | Signatures bind tasks to a specific Worker to prevent front-running    |
-| Deadline Based Refunds         | Escrow returns to Master if compute not completed in time              |
-| Programmatic Settlement        | Conditional state machine drives payment or refund                     |
-| x402 Native Workflow           | Full pipeline: intent, verification, compute, submit, settle or refund |
-
-## 3. Actors and Components
-
-There are five core components in Econos.
-
-1. Master Agent
-   Triggers tasks, sends escrow deposits, signs EIP-712 intents.
-
-2. Native Escrow Contract
-   Holds funds, enforces deadlines, settles payment or refunds.
-
-3. Paymaster Contract
-   Sponsors gas for Worker result submissions.
-
-4. Worker Agent (Web2 API)
-   Performs compute through any HTTP endpoint.
-
-5. Sidecar Runtime (Node.js)
-   Handles blockchain events, signature verification and gasless submission.
+Econos is a protocol architecture that eliminates facilitator dependencies in agent-to-agent commerce by separating authorization, payment, and execution into distinct, composable layers. Through a Docker sidecar pattern, any static Web2 API becomes an autonomous agent capable of cryptographic settlement—without requiring blockchain knowledge, gas fees, or web3 infrastructure.
 
 ---
 
-# 4. Architecture
+## The Problem: Facilitator-Based x402 Workflows
 
-## 4.1 Logical Topology
+Current x402 (HTTP 402 Payment Required) implementations rely on centralized facilitators to coordinate payment and execution between agents. This creates fundamental limitations:
+
+| Problem | Impact |
+|---------|--------|
+| **Centralized Facilitators** | Single point of failure, trust requirements, and censorship risk |
+| **Complex Web3 Onboarding** | Workers must understand wallets, gas, nonces, RPC endpoints, and transaction signing |
+| **Gas Cost Barriers** | Workers need capital before earning, creating bootstrapping problems |
+| **Frontrunning Risk** | No cryptographic binding between task authorization and worker assignment |
+| **Fragmented Settlement** | Off-chain and on-chain coordination requires custom integration per API |
+| **No Standard Web2 Bridge** | Each HTTP API integration requires bespoke blockchain logic |
+
+These limitations prevent Web2 developers from participating in autonomous agent economies and create centralization pressures around payment infrastructure.
+
+---
+
+## Protocol Solution: Architectural Separation
+
+Econos solves these problems through **architectural decomposition** rather than centralized coordination:
+
+### 1. **Authorization Layer** (EIP-712 Off-Chain Intents)
+- Master agents sign cryptographic task assignments binding specific workers
+- Prevents frontrunning and unauthorized execution
+- Off-chain verification before compute begins
+- Zero on-chain cost for authorization
+
+### 2. **Payment Layer** (Native Escrow Contract)
+- Master pre-deposits funds on-chain before task execution
+- Smart contract guarantees worker payment on successful completion
+- Eliminates trust assumptions and insolvency risk
+- Automatic refunds on deadline expiration
+
+### 3. **Execution Layer** (Docker Sidecar)
+- Translates blockchain events to HTTP API calls
+- Handles all web3 complexity (RPC, gas, nonces, signatures)
+- Worker APIs remain pure HTTP endpoints
+- One-line Docker deployment for any static API
+
+### 4. **Gas Abstraction** (Paymaster Sponsorship)
+- Protocol sponsors all worker transaction gas
+- Workers never hold or spend cryptocurrency
+- Removes capital requirements for participation
+- Enables instant onboarding with zero friction
+
+---
+
+## Architecture Overview
+
+### Logical Topology
 
 ```mermaid
 flowchart LR
@@ -56,316 +63,577 @@ flowchart LR
     classDef contract fill:#f9f,stroke:#333,stroke-width:2px,color:black;
     classDef offchain fill:#e1f5fe,stroke:#01579b,stroke-width:2px,color:black;
     classDef actor fill:#fff9c4,stroke:#fbc02d,stroke-width:2px,color:black;
+    classDef docker fill:#d1c4e9,stroke:#512da8,stroke-width:2px,color:black;
 
-    subgraph OffChain [Off-Chain Infrastructure]
+    subgraph Web2 [Web2 Infrastructure]
         direction TB
-        MA([Master Agent]):::actor
-        SA[Sidecar Runtime]:::offchain
-        WA[Worker API]:::offchain
+        API[Any HTTP API<br/>Image Gen, AI, Data...]:::offchain
     end
 
-    subgraph OnChain [Blockchain Layer]
+    subgraph Sidecar [Docker Sidecar Container]
         direction TB
-        ESC[("Native Escrow<br/>Contract")]:::contract
-        WW([Worker Wallet]):::actor
+        SC[Econos Sidecar<br/>Blockchain Abstraction]:::docker
+    end
+
+    subgraph Blockchain [On-Chain Protocol]
+        direction TB
+        ESC[(Native Escrow<br/>Payment Guarantees)]:::contract
+        PM[(Paymaster<br/>Gas Sponsorship)]:::contract
+        REG[(Worker Registry<br/>Discovery)]:::contract
+    end
+
+    subgraph Agent [Master Agent]
+        MA([Orchestrator]):::actor
     end
 
     %% Flow
-    MA -->|1. EIP712 Intent| SA
+    MA -->|1. EIP-712 Intent| SC
     MA -->|2. depositTask + zkTCRO| ESC
     
-    ESC -.->|3. TaskCreated Event| SA
+    ESC -.->|3. TaskCreated Event| SC
     
-    SA -->|4. HTTP Request| WA
-    WA -->|5. Compute Result| SA
+    SC -->|4. HTTP POST| API
+    API -->|5. Result| SC
     
-    SA -->|6. submitWork + Params| ESC
-    
-    ESC -->|7. Payout zkTCRO| WW
+    SC -->|6. submitWork| PM
+    PM -->|7. Gasless Tx| ESC
+    ESC -->|8. Worker Payout| SC
 
     %% Link Styling
     linkStyle default stroke-width:2px,fill:none,stroke:gray;
 ```
 
-## 4.2 Data and Control Flow
-
-Econos implements a multi step x402 style autonomous settlement flow.
+### Complete Protocol Flow
 
 ```mermaid
 sequenceDiagram
     participant MA as Master Agent
-    participant ESC as Escrow
-    participant SA as Sidecar
-    participant WA as Worker API
+    participant ESC as Native Escrow
+    participant SC as Docker Sidecar
+    participant API as Web2 HTTP API
     participant PM as Paymaster
 
-    MA->>ESC: depositTask(taskId, worker, duration, value)
-    MA->>SA: send EIP712 intent (task parameters)
+    Note over MA,PM: AUTHORIZATION PHASE (Off-Chain)
+    MA->>MA: Generate EIP-712 signed intent
+    MA->>SC: Send signed task authorization
 
-    ESC-->>SA: TaskCreated event
-    SA->>ESC: read task state
-    SA->>SA: verify EIP712 signature from Master
-    SA->>WA: HTTP POST /process(taskId, params)
-    WA-->>SA: resultHash
+    Note over MA,PM: PAYMENT PHASE (On-Chain)
+    MA->>ESC: depositTask(taskId, worker, deadline) + zkTCRO
+    ESC-->>SC: TaskCreated event
 
-    SA->>PM: pre-request for sponsorship
-    PM-->>ESC: gas sponsorship
-    SA->>ESC: submitWork(taskId, resultHash)
-
-    ESC-->>WW: payout zkTCRO
-    ESC-->>MA: completion notification
+    Note over MA,PM: VERIFICATION PHASE (Sidecar)
+    SC->>SC: Verify EIP-712 signature from Master
+    SC->>ESC: Check task state is OPEN
+    SC->>SC: Validate worker assignment matches
+    
+    alt Invalid Authorization
+        SC-->>MA: Reject task
+    else Valid Authorization
+        Note over MA,PM: EXECUTION PHASE (Web2)
+        SC->>API: HTTP POST /execute(params)
+        API->>API: Perform compute (AI, rendering, etc.)
+        API-->>SC: Return result JSON
+        
+        Note over MA,PM: SETTLEMENT PHASE (Gasless)
+        SC->>SC: Canonicalize result → resultHash
+        SC->>PM: submitWork(taskId, resultHash)
+        PM->>ESC: Forward tx (gasless for worker)
+        ESC->>ESC: Validate and settle payment
+        ESC-->>SC: zkTCRO payout + TaskCompleted
+        
+        SC-->>MA: Result available
+    end
 ```
 
 ---
 
-## 5. Hybrid Model (EIP-712 + Escrow)
+## The Sidecar Pattern: Zero-Friction Web2 Onboarding
 
-The hybrid model is designed to split authority cleanly:
+The core innovation enabling seamless Web2 integration is the **Econos Sidecar**—a Docker container that sits alongside any HTTP API and handles all blockchain complexity.
 
-* EIP-712 signature authorizes the task
-* Escrow guarantees payment
-* Paymaster covers gas
-* Sidecar orchestrates the workflow
+### What the Sidecar Does
 
-This avoids the pitfalls of pure off-chain signature models and pure on-chain escrow models.
+1. **Listens** for on-chain `TaskCreated` events from the escrow contract
+2. **Verifies** EIP-712 signatures to ensure authorized task assignment
+3. **Translates** blockchain events into HTTP requests to the Worker API
+4. **Receives** compute results from the Worker API
+5. **Submits** cryptographic result commitments to the blockchain (gaslessly)
+6. **Manages** all RPC connections, gas, nonces, and transaction signing
 
-### 5.1 Why EIP-712 Exists Here
+### What Developers DON'T Need to Know
 
-Workers verify:
+- ❌ Blockchain RPC endpoints or web3 libraries
+- ❌ Gas fees, nonces, or transaction formatting
+- ❌ Wallet management or private key security in their application
+- ❌ Smart contract ABIs or Solidity
+- ❌ Event listening or blockchain state synchronization
 
-* Signature authenticity
-* Assignment (signature binds specific Worker)
-* Expiry time
-* Compute parameters
+### What Developers DO Need
 
-Workers can reject tasks before spending electricity.
+✅ **An HTTP API endpoint** that accepts JSON and returns JSON  
+✅ **Two environment variables**: `WORKER_PRIVATE_KEY` and `RPC_URL`  
+✅ **Docker compose** to run the sidecar container
 
-### 5.2 Why Escrow Exists Here
+### Deployment Example
 
-Escrow guarantees:
+```yaml
+version: '3.8'
 
-* Payment cannot be revoked after compute starts
-* Funds cannot be transferred by Master once locked
-* Refund rules are deterministic
-* No griefing from insolvency or race conditions
+services:
+  # Your existing Web2 API (unchanged)
+  my-api:
+    image: my-company/image-generator:latest
+    ports:
+      - "8080:8080"
 
-### 5.3 Why Paymaster Exists Here
+  # Econos Sidecar (blockchain abstraction)
+  econos-sidecar:
+    image: econos/sidecar:latest
+    environment:
+      - WORKER_PRIVATE_KEY=0x...
+      - RPC_URL=https://evm-t3.cronos.org/
+      - ESCROW_ADDRESS=0x...
+      - INTERNAL_API_URL=http://my-api:8080/process
+    depends_on:
+      - my-api
+```
 
-Workers:
-
-* Do not need zkTCRO for gas
-* Do not need onboarding capital
-* Do not need to know blockchain mechanics
+**That's it.** Your HTTP API is now an autonomous agent capable of:
+- Receiving cryptographically authorized tasks
+- Executing compute workloads
+- Settling payments on-chain with zero gas costs
+- Operating 24/7 without human intervention
 
 ---
 
-## 6. Detailed Workflow
+## Protocol Components
 
-The full task lifecycle contains six phases.
+### 1. Native Escrow Contract
 
-### Phase 1: Deposit Escrow (On-Chain)
+**Purpose**: Trustless payment guarantees through smart contract-held funds
 
-Master Agent executes:
-
+**Key Functions**:
+```solidity
+depositTask(taskId, worker, duration) payable
+submitWork(taskId, resultHash)
+refund(taskId)
 ```
-depositTask(taskId, worker, duration)
+
+**State Machine**:
+- `OPEN` → Task created, funds locked, worker can execute
+- `COMPLETED` → Worker submitted result, payment released
+- `REFUNDED` → Deadline expired, Master reclaimed funds
+- `CANCELLED` → Task cancelled before execution
+
+**Security Properties**:
+- Master cannot withdraw after deposit (no rug risk)
+- Worker guaranteed payment on successful `submitWork()`
+- Deadline-based refunds prevent capital lockup
+- EIP-712 signature verification prevents unauthorized workers
+
+### 2. Paymaster Contract
+
+**Purpose**: Gas abstraction for worker transactions
+
+**Mechanism**:
+- Sponsors gas for `submitWork()` calls from registered workers
+- Validates worker identity before sponsorship
+- Prevents spam through whitelist or stake requirements
+
+**Worker Benefits**:
+- Zero gas costs for all on-chain interactions
+- No need to acquire or hold native tokens
+- Instant participation without capital
+
+### 3. Worker Registry Contract
+
+**Purpose**: Decentralized service discovery
+
+**Stored Metadata**:
+- Worker address and endpoint URL
+- Service offerings and pricing
+- Capability descriptions
+- Reputation scores (optional)
+
+**Enables**:
+- Master agents to discover available workers programmatically
+- Permissionless worker registration
+- Multi-service support per worker
+
+### 4. Docker Sidecar Runtime
+
+**Architecture**:
+```
+┌─────────────────────────────────────┐
+│         Docker Sidecar              │
+│                                     │
+│  ┌──────────────────────────────┐  │
+│  │   Blockchain Interface       │  │
+│  │  - Event Listener            │  │
+│  │  - EIP-712 Verifier          │  │
+│  │  - Transaction Signer        │  │
+│  │  - Paymaster Integration     │  │
+│  └──────────────────────────────┘  │
+│              ↕                      │
+│  ┌──────────────────────────────┐  │
+│  │   HTTP Proxy                 │  │
+│  │  - Request Translation       │  │
+│  │  - Response Canonicalization │  │
+│  │  - Result Hashing            │  │
+│  └──────────────────────────────┘  │
+└─────────────────────────────────────┘
+              ↕ HTTP
+┌─────────────────────────────────────┐
+│      Worker HTTP API                │
+│  (Image Gen, AI, Data, etc.)        │
+└─────────────────────────────────────┐
 ```
 
-and attaches zkTCRO value.
+**Implementation**: [packages/sidecar/](file:///home/stellarquant/Projects/Econos/packages/sidecar)
 
-Escrow contract stores:
+---
 
-* master address
-* worker address
-* amount
-* deadline
-* open flag
+## Protocol vs Facilitator Architecture
 
-### Phase 2: Authorization Intent (Off-Chain)
+| Aspect | Traditional x402 Facilitator | Econos Protocol |
+|--------|------------------------------|-----------------|
+| **Settlement Trust** | Custodial / Reputation-based | Smart contract escrow (trustless) |
+| **Worker Onboarding** | Web3 wallet setup, gas acquisition, RPC configuration | `docker-compose up` (2 env vars) |
+| **Gas Requirements** | Worker pays for transactions | Paymaster sponsors (gasless) |
+| **Capital Requirements** | Workers need token holdings | Zero (gas sponsored, escrow pre-funded) |
+| **Frontrunning Protection** | None (observable task queue) | EIP-712 signature binds worker |
+| **Single Point of Failure** | Facilitator outage = system down | Fully decentralized protocol |
+| **Web2 Integration** | Custom per API | Standardized Docker sidecar |
+| **Authorization Model** | Facilitator verifies payment | Cryptographic signature verification |
+| **Economic Finality** | Facilitator reputation | Smart contract state transitions |
+| **Censorship Resistance** | Facilitator can block workers | Permissionless protocol participation |
 
-Master generates EIP-712 payload:
+---
 
+## Key Protocol Properties
+
+| Property | Description |
+|----------|-------------|
+| **EIP-712 Authorization** | Master signs off-chain task intents that workers verify before compute |
+| **Native zkTCRO Escrow** | Master pre-funds tasks on-chain without ERC20 complexity |
+| **Gasless Worker Execution** | Paymaster covers all gas for worker result submissions |
+| **Zero Web3 Knowledge** | Workers run a Docker sidecar that abstracts blockchain interaction |
+| **Cryptographic Assignment** | Signatures bind tasks to specific workers, preventing frontrunning |
+| **Deadline-Based Refunds** | Escrow automatically returns funds if compute not completed in time |
+| **Deterministic Settlement** | State machine logic guarantees payment or refund without arbitration |
+| **Permissionless Participation** | No KYC, approvals, or facilitator relationships required |
+
+---
+
+## Complete Task Lifecycle
+
+### Phase 1: Master Creates Task Intent
+
+Master agent generates EIP-712 signed authorization:
+
+```javascript
+const taskIntent = {
+  taskId: "0x123...",
+  worker: "0xWorkerAddress",
+  expiresAt: 1736956800,
+  nonce: 1
+};
+const signature = await masterWallet.signTypedData(domain, types, taskIntent);
 ```
+
+Sends intent to worker off-chain (HTTP, P2P, or event log).
+
+### Phase 2: Master Deposits Escrow
+
+Master locks payment on-chain:
+
+```javascript
+await escrow.depositTask(
+  taskId,
+  workerAddress,
+  duration,
+  { value: ethers.parseEther("0.1") } // 0.1 zkTCRO
+);
+```
+
+Contract emits `TaskCreated` event.
+
+### Phase 3: Sidecar Verification
+
+Docker sidecar receives event and verifies:
+1. EIP-712 signature is valid
+2. Signer matches `task.master` from contract
+3. Assignment matches this worker's address
+4. Task state is `OPEN` with sufficient funds
+5. Current time is before `expiresAt`
+
+If any check fails, task is rejected before compute.
+
+### Phase 4: Worker Execution
+
+Sidecar proxies request to Worker API:
+
+```bash
+POST http://localhost:8080/process
+Content-Type: application/json
+
 {
-    taskId,
-    worker,
-    expiresAt,
-    nonce
+  "taskId": "0x123...",
+  "params": {
+    "prompt": "Generate cyberpunk cityscape",
+    "style": "neon"
+  }
 }
 ```
 
-Signs and sends intent to Worker off-chain.
+Worker API performs arbitrary compute:
+- AI image generation (Stable Diffusion, DALL-E)
+- Text summarization (LLM inference)
+- Video rendering
+- Data analysis
+- Market research
+- **Any HTTP-accessible workload**
 
-### Phase 3: Sidecar Verify (Local)
+Returns result JSON.
 
-Sidecar verifies:
+### Phase 5: Gasless Settlement
 
-1. `recover(sig) == master`
-2. `worker == sidecarWallet`
-3. `expiresAt >= now`
-4. `escrowState == open`
+Sidecar:
+1. Canonicalizes result (deterministic JSON serialization)
+2. Computes `resultHash = keccak256(canonicalJson)`
+3. Calls `submitWork(taskId, resultHash)` via Paymaster
 
-If valid, execute workload.
+Paymaster sponsors the transaction gas, forwarding to escrow.
 
-### Phase 4: Compute Execution (Off-Chain)
+Escrow contract:
+- Validates task state is `OPEN`
+- Validates `msg.sender` is assigned worker
+- Validates deadline has not passed
+- Transfers zkTCRO to worker
+- Updates state to `COMPLETED`
+- Emits `TaskCompleted` event
 
-Sidecar calls:
+Worker receives payment **atomically with result commitment**.
+
+### Phase 6: Result Retrieval
+
+Master agent queries worker for full result data, verifies `keccak256(result) == resultHash`, and uses the output in downstream workflows.
+
+---
+
+## Economic Security Model
+
+### Worker Protections
+
+✅ **Pre-funded escrow** - Payment guaranteed before compute begins  
+✅ **Signature verification** - No unauthorized tasks consume resources  
+✅ **Gasless settlement** - Zero transaction cost exposure  
+✅ **Atomic payout** - Payment and state transition are indivisible  
+✅ **No insolvency risk** - Funds locked in contract, not user wallet  
+
+### Master Protections
+
+✅ **Deadline refunds** - Capital not permanently locked if worker fails  
+✅ **Worker binding** - Only authorized worker can claim payment  
+✅ **Result commitments** - Cryptographic hash prevents result tampering  
+✅ **Deterministic settlement** - No subjective arbitration or disputes  
+
+### Attack Resistance
+
+| Attack Vector | Mitigation |
+|---------------|------------|
+| **Worker claims without compute** | Result hash commitment verifiable by Master off-chain |
+| **Frontrunning task execution** | EIP-712 signature binds specific worker address |
+| **Master double-spend** | Escrow locks funds on-chain, Master cannot withdraw |
+| **Griefing (task spam)** | Workers verify escrow deposit before compute |
+| **Sybil workers** | Optional staking or reputation in WorkerRegistry |
+| **Paymaster exploitation** | Whitelist or stake requirements for gas sponsorship |
+
+---
+
+## Protocol Design Principles
+
+### 1. Separation of Authorization and Payment
+
+**Principle**: Authorization (who can execute) is orthogonal to payment (financial guarantee).
+
+**Implementation**:
+- **EIP-712 signatures** provide cryptographic authorization off-chain
+- **Native escrow** provides economic guarantees on-chain
+- Neither can function without the other, creating defense in depth
+
+**Benefit**: Workers can reject unauthorized tasks before spending computation, while Masters cannot revoke payment after authorization.
+
+### 2. Progressive Decentralization
+
+**Principle**: No required intermediaries or trusted third parties.
+
+**Implementation**:
+- Smart contracts enforce settlement (no facilitator custody)
+- Permissionless worker registration (no approval process)
+- Deterministic state machine (no arbitration layer)
+
+**Benefit**: Protocol operates identically whether 10 or 10,000 participants exist.
+
+### 3. Abstraction Without Trust
+
+**Principle**: Simplify developer experience without introducing trust assumptions.
+
+**Implementation**:
+- Docker sidecar abstracts complexity but **does not custody funds**
+- Worker retains private key, sidecar only signs authorized transactions
+- All economic logic enforced by smart contracts, not sidecar
+
+**Benefit**: Web2 developers get simplicity without sacrificing self-custody or security.
+
+### 4. Composability Over Integration
+
+**Principle**: Standardized interfaces enable ecosystem growth.
+
+**Implementation**:
+- Standard EIP-712 message format
+- Standard HTTP API contract
+- Standard escrow state machine
+- Standard Docker deployment
+
+**Benefit**: Tools, dashboards, and orchestration layers can be built once and work with all workers.
+
+### 5. Economic Finality Over Reputation
+
+**Principle**: Cryptographic and economic guarantees trump social consensus.
+
+**Implementation**:
+- Escrow ensures payment regardless of worker reputation
+- Signature verification prevents task stealing regardless of Master reputation
+- Smart contract state transitions are deterministic
+
+**Benefit**: System works for anonymous, pseudonymous, and one-time participants without reputation bootstrapping.
+
+---
+
+## Ecosystem Value
+
+### For Web2 Developers
+- **Monetize existing HTTP APIs** without blockchain rewrite
+- **Zero web3 learning curve** - Docker is the only new tool
+- **No infrastructure changes** - APIs remain stateless HTTP services
+- **Instant payment settlement** - No payment processor fees or delays
+
+### For Protocol Researchers
+- **Reference architecture** for decentralized agent commerce
+- **Separation of concerns** between authorization, payment, and execution
+- **Gas abstraction patterns** via paymaster design
+- **Hybrid on-chain/off-chain** coordination primitives
+
+### For Multi-Agent Systems
+- **Composable payment primitive** for agent-to-agent workflows
+- **Trustless compute outsourcing** without central coordinators
+- **Standardized discovery** via WorkerRegistry
+- **Economic incentive alignment** through escrow settlement
+
+### For Cronos zkEVM Ecosystem
+- **Demonstrates zkEVM capabilities** for complex stateful protocols
+- **Showcases native asset settlement** without ERC20 overhead
+- **Highlights paymaster use cases** for UX improvement
+- **Provides reusable contract templates** for agentic finance
+
+---
+
+## Implementation
+
+### Repository Structure
 
 ```
-POST WORKLOAD_API /process(taskId, params)
+packages/
+├── contracts/           # Solidity smart contracts (NativeEscrow, Paymaster, Registry)
+├── sidecar/             # Docker sidecar for Web2 API abstraction
+├── worker-node/         # Reference worker implementation with AI agents
+├── master-agent/        # Reference master orchestrator
+└── frontend/            # Visual workflow builder (canvas UI)
 ```
 
-Worker API performs arbitrary workloads:
+### Quick Start: Deploy Your First Worker
 
-* image generation
-* transcript extraction
-* ML inference
-* video rendering
-* text summarization
-* embeddings
-* or any HTTP compute job
+#### 1. Create an HTTP API
 
-Returns `resultHash`, optionally linking large data through IPFS.
-
-### Phase 5: Gasless Submit (On-Chain)
-
-Sidecar executes:
-
-```
-submitWork(taskId, resultHash)
+```javascript
+// server.js
+app.post('/process', (req, res) => {
+  const { params } = req.body;
+  // Your business logic here
+  const result = performCompute(params);
+  res.json({ result });
+});
 ```
 
-with:
+#### 2. Create Docker Compose
 
+```yaml
+version: '3.8'
+services:
+  my-api:
+    build: .
+    ports: ["8080:8080"]
+  
+  econos-sidecar:
+    image: econos/sidecar:latest
+    environment:
+      - WORKER_PRIVATE_KEY=${WORKER_KEY}
+      - RPC_URL=https://evm-t3.cronos.org/
+      - ESCROW_ADDRESS=${ESCROW_ADDR}
+      - INTERNAL_API_URL=http://my-api:8080/process
 ```
-customData.paymasterParams = ...
+
+#### 3. Run
+
+```bash
+docker-compose up
 ```
 
-Paymaster sponsors gas.
-
-### Phase 6: Conditional Settlement or Refund
-
-Escrow contract enforces:
-
-* If before deadline and correct worker calls: payout zkTCRO to Worker
-* If deadline passes: Master can call `refund(taskId)` to retrieve funds
+Your API is now an autonomous agent on Cronos zkEVM, capable of:
+- ✅ Receiving cryptographically authorized tasks
+- ✅ Executing compute workloads autonomously
+- ✅ Settling payments gaslessly on-chain
+- ✅ Operating 24/7 without manual intervention
 
 ---
 
-## 7. Smart Contract Responsibilities
+## Documentation & Resources
 
-### 7.1 Native Escrow Contract
-
-Functions:
-
-* depositTask(taskId, worker, duration) payable
-* submitWork(taskId, resultHash)
-* refund(taskId)
-
-State machine:
-
-* new
-* open
-* completed
-* refunded
-* expired
-
-Settlement logic:
-
-* All funds held in contract
-* Release uses native transfer
-* No ERC20 approvals required
-
-### 7.2 Paymaster Contract
-
-Functions:
-
-* validate request
-* pay for gas
-
-Requirements:
-
-* Sponsors only known Workers
-* Prevents spam or arbitrary calls
+- **[Sidecar Implementation](file:///home/stellarquant/Projects/Econos/packages/sidecar)** - Docker container source code
+- **[Smart Contracts](file:///home/stellarquant/Projects/Econos/packages/contracts)** - Solidity protocol implementation
+- **[Worker Node](file:///home/stellarquant/Projects/Econos/packages/worker-node)** - Reference worker with AI services
+- **[Master Agent](file:///home/stellarquant/Projects/Econos/packages/master-agent)** - Reference orchestrator
+- **[Cronos zkEVM Docs](https://docs-zkevm.cronos.org)** - Network information
+- **[EIP-712 Specification](https://eips.ethereum.org/EIPS/eip-712)** - Structured data signing
 
 ---
 
-## 8. Sidecar Runtime (Node.js)
+## Conclusion
 
-The Sidecar connects blockchain and HTTP without exposing blockchain to Web2 developers.
+**Econos is a protocol for agent-to-agent commerce that eliminates facilitator dependencies through architectural innovation.**
 
-Responsibilities:
+By separating authorization (EIP-712), payment (native escrow), and execution (Docker sidecar) into distinct, composable layers, the protocol enables:
 
-* Listen for `TaskCreated`
-* Verify EIP-712 signature
-* Verify escrow is funded and open
-* Execute HTTP workload
-* Submit result via Paymaster
-* Never expose RPC or keys to Worker API
+1. **Trustless settlement** - Smart contract guarantees replace reputation and custody
+2. **Gasless participation** - Paymaster sponsorship removes capital requirements
+3. **Permissionless onboarding** - Any HTTP API becomes an autonomous agent
+4. **Zero web3 knowledge** - Docker abstraction hides all blockchain complexity
+5. **Cryptographic assignment** - EIP-712 signatures prevent frontrunning
+6. **Economic finality** - Deterministic state machine ensures payment or refund
 
-Web2 developer does not touch:
+This is not a marketplace or application—**it is protocol infrastructure for autonomous economies**.
 
-* RPC calls
-* Gas fees
-* Nonces
-* Transactions
-* Wallet management
+Econos provides a reference implementation demonstrating how Web2 systems can participate in decentralized agent commerce without centralized intermediaries, complex integrations, or blockchain expertise. The architectural patterns are reusable, the contracts are composable, and the economic model is sustainable.
 
-They only:
-
-* Build an HTTP endpoint
-* Register it
-* Run docker
+**The protocol is live on Cronos zkEVM testnet.**
 
 ---
 
-## 9. x402 Mapping
+## License
 
-| x402 Concept            | Econos Mapping                                     |
-| ----------------------- | -------------------------------------------------- |
-| Intent Generation       | EIP-712 signature from Master                      |
-| Autonomous Execution    | Sidecar runs workload without humans               |
-| Programmatic Settlement | Native escrow contract enforces payouts            |
-| Multi Step Pipeline     | Deposit, Intent, Compute, Submit, Settle or Refund |
-| Conditional Logic       | Deadline, worker matching, signature validation    |
-| Risk Containment        | Escrow ensures no solvency or rug risk             |
-| Gasless Execution       | Paymaster sponsors submitWork gas                  |
-| Real Asset Movement     | Native zkTCRO delivered to Worker                  |
-
-This is significantly more advanced than simple contract automation because it integrates off-chain compute markets with autonomous payment rails.
+MIT License - See [LICENSE](./LICENSE) for details.
 
 ---
 
-## 10. Security and Economics
-
-Worker Safety:
-
-* Pre funded escrow ensures payout
-* No compute without verified intent
-* No gas cost exposure
-* No insolvency race conditioning
-
-Master Safety:
-
-* Deadlines ensure capital is not stuck
-* Refund path prevents griefing by non-performing Workers
-
----
-
-## 11. Ecosystem Value
-
-Econos introduces:
-
-* Monetization path for Web2 compute providers
-* x402 settlement rails as reference architecture
-* Agent oriented execution and payment primitives
-* Low friction onboarding for AI workloads
-* Direct synergy with Cronos zkEVM
-
----
-
-## 12. Conclusion
-
-Econos enables autonomous compute settlement between agents using a hybrid authorization and settlement model that combines off chain EIP-712 intents, on chain escrow guarantees, gasless execution via Paymaster, and universal HTTP interoperability through a Sidecar runtime. The system is x402 native, financially coherent, and production viable in concept.
-
----
+**Built for autonomous agent economies on Cronos zkEVM**
