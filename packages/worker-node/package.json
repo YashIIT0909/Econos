@@ -5,7 +5,7 @@
     "main": "dist/index.js",
     "scripts": {
         "dev": "nodemon --exec ts-node src/index.ts",
-        "build": "tsc",
+        "build": "tsc && cp src/services/summary-generation/prompt.txt dist/services/summary-generation/prompt.txt",
         "start": "node dist/index.js",
         "typecheck": "tsc --noEmit"
     },
