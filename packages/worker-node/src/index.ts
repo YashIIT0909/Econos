@@ -1,4 +1,11 @@
 import 'dotenv/config';
+
+// Fix for BigInt serialization in JSON (common with ethers.js/viem)
+// @ts-ignore
+BigInt.prototype.toJSON = function () {
+    return this.toString();
+};
+
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import { generateManifest } from './registry/manifest';
