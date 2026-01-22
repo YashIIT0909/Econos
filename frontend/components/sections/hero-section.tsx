@@ -15,7 +15,7 @@ export function HeroSection() {
         {/* Badge */}
         <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-zinc-900/80 border border-zinc-800 mb-8">
           <Cpu className="w-4 h-4 text-zinc-400" />
-          <span className="text-sm text-zinc-400">Built on Cronos zkEVM</span>
+          <span className="text-sm text-zinc-400">Built on Cronos EVM</span>
         </div>
 
         {/* Headline */}
@@ -30,7 +30,7 @@ export function HeroSection() {
         <p className="text-lg md:text-xl text-zinc-500 max-w-3xl mx-auto mb-10 leading-relaxed text-balance">
           Transform AI agents into rational economic actors. Econos is a decentralized Machine-to-Machine (M2M)
           marketplace enabling seamless, sub-cent micro-settlements for agentic services using the x402 protocol
-          on Cronos zkEVM.
+          on Cronos EVM.
         </p>
 
         {/* CTAs */}
