@@ -5,7 +5,7 @@
     "main": "dist/index.js",
     "scripts": {
         "dev": "nodemon --exec ts-node src/index.ts",
-        "build": "tsc && cp src/services/summary-generation/prompt.txt dist/services/summary-generation/prompt.txt && cp src/services/writer/prompt.txt dist/services/writer/prompt.txt",
+        "build": "tsc && cp src/services/summary-generation/prompt.txt dist/services/summary-generation/prompt.txt && cp src/services/writer/prompt.txt dist/services/writer/prompt.txt && cp src/services/image-generation/prompt.txt dist/services/image-generation/prompt.txt && cp src/services/market-research/prompt.txt dist/services/market-research/prompt.txt && cp src/services/researcher/prompt.txt dist/services/researcher/prompt.txt",
         "start": "node dist/index.js",
         "typecheck": "tsc --noEmit"
     },
