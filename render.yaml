@@ -1,0 +1,82 @@
+services:
+  # ============================================
+  # Frontend - Next.js Static Site
+  # ============================================
+  - type: web
+    name: econos-frontend
+    env: static
+    buildCommand: cd frontend && npm install && npm run build
+    staticPublishPath: ./frontend/.next
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NEXT_PUBLIC_MASTER_AGENT_URL
+        sync: false  # Set manually in Render dashboard
+      - key: NEXT_PUBLIC_WORKER_NODE_URL
+        sync: false  # Set manually in Render dashboard
+      - key: NEXT_PUBLIC_SUPABASE_URL
+        sync: false
+      - key: NEXT_PUBLIC_SUPABASE_ANON_KEY
+        sync: false
+
+  # ============================================
+  # Master Agent - Node.js Web Service
+  # ============================================
+  - type: web
+    name: econos-master-agent
+    env: node
+    region: oregon
+    plan: free
+    buildCommand: cd packages/master-agent && npm install && npm run build
+    startCommand: cd packages/master-agent && node dist/server.js
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 4000
+      - key: GEMINI_API_KEY
+        sync: false  # Set manually in Render dashboard
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: WORKER_REGISTRY_ADDRESS
+        sync: false
+      - key: NATIVE_ESCROW_ADDRESS
+        sync: false
+      - key: CRONOS_RPC_URL
+        value: https://evm-t3.cronos.org/
+      - key: MASTER_PRIVATE_KEY
+        sync: false  # CRITICAL: Keep this secret!
+
+  # ============================================
+  # Worker Node - Node.js Web Service
+  # ============================================
+  - type: web
+    name: econos-worker-node
+    env: node
+    region: oregon
+    plan: free
+    buildCommand: cd packages/worker-node && npm install && npm run build
+    startCommand: cd packages/worker-node && node dist/index.js
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 5000
+      - key: GEMINI_API_KEY
+        sync: false  # Set manually in Render dashboard
+      - key: WORKER_PRIVATE_KEY
+        sync: false  # CRITICAL: Keep this secret!
+      - key: CRONOS_RPC_URL
+        value: https://evm-t3.cronos.org/
+      - key: NATIVE_ESCROW_ADDRESS
+        sync: false
+      - key: ENABLE_COORDINATOR
+        value: "true"
